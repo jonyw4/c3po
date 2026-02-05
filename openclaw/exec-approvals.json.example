@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "defaults": {
+    "security": "deny",
+    "ask": "on-miss",
+    "askFallback": "deny",
+    "autoAllowSkills": false
+  },
+  "agents": {
+    "c3po": {
+      "security": "allowlist",
+      "ask": "on-miss",
+      "askFallback": "deny",
+      "autoAllowSkills": true,
+      "allowlist": [
+        {
+          "pattern": "/ABSOLUTE/PATH/TO/THIS/REPO/scripts/c3po-calendar.ts"
+        },
+        {
+          "pattern": "/ABSOLUTE/PATH/TO/THIS/REPO/scripts/c3po-calendar-create"
+        },
+        {
+          "pattern": "/ABSOLUTE/PATH/TO/THIS/REPO/scripts/archive-memory.ts"
+        }
+      ]
+    }
+  }
+}

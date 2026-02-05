@@ -1,0 +1,7 @@
+[Unit]
+Description=Archive C3PO memory files older than 90 days
+
+[Service]
+Type=oneshot
+WorkingDirectory=/ABSOLUTE/PATH/TO/THIS/REPO
+ExecStart=/usr/bin/env bun /ABSOLUTE/PATH/TO/THIS/REPO/scripts/archive-memory.ts --days 90

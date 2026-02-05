@@ -1,0 +1,139 @@
+#!/bin/bash
+# exe-dev-setup.sh — Setup script for C3PO on exe.dev VM.
+#
+# Run this AFTER cloning the repo on the VM:
+#   cd ~/nunes-celio-c3po && bash deploy/exe-dev-setup.sh
+#
+# Prerequisites:
+#   - exe.dev VM with SSH access
+#   - Repo cloned to ~/nunes-celio-c3po
+#   - config/people.json populated with real data
+#   - ANTHROPIC_API_KEY set in environment
+
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+echo "=== C3PO Setup on exe.dev ==="
+echo "Repo: $REPO_DIR"
+echo ""
+
+# --- 1. Check prerequisites ---
+echo "--- [1/8] Checking prerequisites..."
+
+if [ ! -f "$REPO_DIR/config/people.json" ]; then
+    echo "ERROR: config/people.json not found."
+    echo "Copy config/people.json.example to config/people.json and fill in real data."
+    exit 1
+fi
+
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+    echo "WARNING: ANTHROPIC_API_KEY not set. Set it before starting the gateway."
+    echo '  echo '\''export ANTHROPIC_API_KEY="sk-ant-..."'\'' >> ~/.bashrc && source ~/.bashrc'
+fi
+
+# --- 2. Install Bun if needed ---
+echo "--- [2/8] Checking Bun..."
+
+if command -v bun >/dev/null 2>&1; then
+    BUN_VERSION=$(bun --version)
+    echo "Bun $BUN_VERSION found."
+else
+    echo "Installing Bun..."
+    curl -fsSL https://bun.sh/install | bash
+    export PATH="$HOME/.bun/bin:$PATH"
+    echo "Bun installed."
+fi
+
+# --- 3. Install OpenClaw ---
+echo "--- [3/8] Installing OpenClaw..."
+
+if command -v openclaw >/dev/null 2>&1; then
+    echo "OpenClaw already installed: $(openclaw --version 2>/dev/null || echo 'version unknown')"
+else
+    # OpenClaw is distributed via npm; use bun to install globally
+    bun install -g openclaw@latest
+    echo "OpenClaw installed."
+fi
+
+# --- 4. Install dependencies ---
+echo "--- [4/8] Installing dependencies..."
+
+cd "$REPO_DIR"
+if [ ! -d "node_modules/googleapis" ]; then
+    bun install
+    echo "Dependencies installed."
+else
+    echo "Dependencies already installed."
+fi
+
+# --- 5. Set timezone ---
+echo "--- [5/8] Setting timezone to America/Sao_Paulo..."
+
+sudo timedatectl set-timezone America/Sao_Paulo 2>/dev/null || echo "Could not set timezone (non-fatal)."
+
+# --- 6. Render config files ---
+echo "--- [6/8] Rendering config files..."
+
+bun "$REPO_DIR/scripts/render-files.ts"
+
+# --- 7. Deploy OpenClaw config ---
+echo "--- [7/8] Deploying OpenClaw config..."
+
+mkdir -p ~/.openclaw
+cp "$REPO_DIR/openclaw/openclaw.json5.local" ~/.openclaw/openclaw.json
+cp "$REPO_DIR/openclaw/exec-approvals.local.json" ~/.openclaw/exec-approvals.json
+echo "Config copied to ~/.openclaw/"
+
+# --- 8. Install systemd services ---
+echo "--- [8/8] Installing systemd services..."
+
+SYSTEMD_DIR="$HOME/.config/systemd/user"
+mkdir -p "$SYSTEMD_DIR"
+
+# Gateway (fallback if `openclaw gateway install` doesn't exist)
+if [ -f "$REPO_DIR/scripts/systemd/c3po-gateway.local.service" ]; then
+    cp "$REPO_DIR/scripts/systemd/c3po-gateway.local.service" "$SYSTEMD_DIR/c3po-gateway.service"
+fi
+
+# Memory archive
+if [ -f "$REPO_DIR/scripts/systemd/c3po-memory-archive.local.service" ]; then
+    cp "$REPO_DIR/scripts/systemd/c3po-memory-archive.local.service" "$SYSTEMD_DIR/c3po-memory-archive.service"
+fi
+if [ -f "$REPO_DIR/scripts/systemd/c3po-memory-archive.local.timer" ]; then
+    cp "$REPO_DIR/scripts/systemd/c3po-memory-archive.local.timer" "$SYSTEMD_DIR/c3po-memory-archive.timer"
+fi
+
+# Watchdog
+if [ -f "$REPO_DIR/scripts/systemd/c3po-watchdog.local.service" ]; then
+    cp "$REPO_DIR/scripts/systemd/c3po-watchdog.local.service" "$SYSTEMD_DIR/c3po-watchdog.service"
+fi
+if [ -f "$REPO_DIR/scripts/systemd/c3po-watchdog.timer" ]; then
+    cp "$REPO_DIR/scripts/systemd/c3po-watchdog.timer" "$SYSTEMD_DIR/c3po-watchdog.timer"
+fi
+
+# Reload and enable
+systemctl --user daemon-reload
+
+# Try to enable lingering (survives logout)
+sudo loginctl enable-linger "$(whoami)" 2>/dev/null || echo "Could not enable lingering (non-fatal)."
+
+# Enable timers
+systemctl --user enable c3po-memory-archive.timer 2>/dev/null || true
+systemctl --user start c3po-memory-archive.timer 2>/dev/null || true
+systemctl --user enable c3po-watchdog.timer 2>/dev/null || true
+systemctl --user start c3po-watchdog.timer 2>/dev/null || true
+
+echo ""
+echo "=== Setup complete! ==="
+echo ""
+echo "Next steps (manual):"
+echo "  1. Connect WhatsApp:  openclaw channels login"
+echo "  2. Get group JID:     openclaw channels whatsapp groups"
+echo "  3. Update config/people.json with the real group JID"
+echo "  4. Re-render:         bun scripts/render-files.ts"
+echo "  5. Re-copy config:    cp openclaw/openclaw.json5.local ~/.openclaw/openclaw.json"
+echo "  6. Start gateway:     openclaw gateway --port 18789"
+echo "     (or: systemctl --user enable --now c3po-gateway)"
+echo "  7. Test:              Send a WhatsApp message to the bot"
+echo ""
+echo "For Google Calendar setup, see: scripts/setup-exe-dev.md"

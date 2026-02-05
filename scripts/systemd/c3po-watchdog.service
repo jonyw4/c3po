@@ -1,0 +1,6 @@
+[Unit]
+Description=C3PO Gateway health check (alerts on failure)
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /ABSOLUTE/PATH/TO/THIS/REPO/scripts/systemd/c3po-watchdog.sh

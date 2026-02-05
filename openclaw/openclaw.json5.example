@@ -1,0 +1,58 @@
+{
+  // Example to base your ~/.openclaw/openclaw.json on (JSON5 format).
+  // Adjust paths/IDs/numbers for your setup.
+  // On exe.dev VM, the default path is /home/exedev/nunes-celio-c3po
+
+  agents: {
+    defaults: {
+      // Use this repository as workspace (KB + memory + guardrails).
+      workspace: "/ABSOLUTE/PATH/TO/THIS/REPO",
+      // User timezone to interpret "tomorrow", "friday", etc.
+      userTimezone: "America/Sao_Paulo",
+    },
+    // Define a stable agent id for use in Exec Approvals.
+    list: [
+      {
+        id: "c3po",
+        workspace: "/ABSOLUTE/PATH/TO/THIS/REPO",
+        userTimezone: "America/Sao_Paulo",
+        groupChat: {
+          mentionPatterns: ["^(?:c3po),\\s+"],
+        },
+      },
+    ],
+  },
+
+  channels: {
+    whatsapp: {
+      enabled: true,
+      accountName: "family",
+
+      // DMs: only the couple (allowlist by number).
+      dmPolicy: "allowlist",
+      // Use the numbers from `config/people.json`.
+      allowFrom: ["+55XXXXXXXXXXX", "+55YYYYYYYYYYY"],
+
+      // Groups: only the couple's group (allowlist by JID) and only messages from the couple.
+      groupPolicy: "allowlist",
+      groupAllowFrom: ["+55XXXXXXXXXXX", "+55YYYYYYYYYYY"],
+      groups: {
+        // Use the real group JID. E.g.: `openclaw channels whatsapp groups`
+        // `requireMention: false` allows activation via prefix (e.g.: "c3po, ...") without @mention.
+        "00000000000000-0000000000@g.us": { requireMention: false },
+      },
+    },
+  },
+
+  // Index KB in memory search.
+  memorySearch: {
+    extraPaths: ["kb"],
+  },
+
+  // Allow prefix/regex in group in addition to @mention.
+  messages: {
+    groupChat: {
+      mentionPatterns: ["^(?:c3po),\\s+"],
+    },
+  },
+}

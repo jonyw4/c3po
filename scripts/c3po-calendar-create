@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+
+try:
+    from zoneinfo import ZoneInfo  # py3.9+
+except Exception:  # pragma: no cover
+    ZoneInfo = None  # type: ignore
+
+
+@dataclass(frozen=True)
+class PeopleConfig:
+    timezone: str
+    ana_email: str
+    jony_email: str
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _load_people_config() -> PeopleConfig:
+    repo = _repo_root()
+    path = repo / "config" / "people.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    tz = data.get("timezone") or "America/Sao_Paulo"
+    people = data.get("people") or {}
+    ana = people.get("ana") or {}
+    jony = people.get("jony") or {}
+    ana_email = ana.get("email")
+    jony_email = jony.get("email")
+    if not isinstance(ana_email, str) or "@" not in ana_email:
+        raise ValueError("config.people.ana.email missing/invalid")
+    if not isinstance(jony_email, str) or "@" not in jony_email:
+        raise ValueError("config.people.jony.email missing/invalid")
+    if not isinstance(tz, str) or not tz:
+        tz = "America/Sao_Paulo"
+    return PeopleConfig(timezone=tz, ana_email=ana_email, jony_email=jony_email)
+
+
+def _parse_local_dt(value: str, tz: str) -> datetime:
+    # Accepts "YYYY-MM-DD HH:MM" or ISO "YYYY-MM-DDTHH:MM[:SS]".
+    value = value.strip().replace("T", " ")
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            naive = datetime.strptime(value, fmt)
+            break
+        except ValueError:
+            naive = None  # type: ignore
+    if naive is None:  # type: ignore
+        raise ValueError('start must be "YYYY-MM-DD HH:MM" (or seconds)')
+
+    if ZoneInfo is None:
+        return naive  # best effort
+    return naive.replace(tzinfo=ZoneInfo(tz))
+
+
+def _iso(dt_value: datetime) -> str:
+    # Prefer ISO with timezone offset if present.
+    return dt_value.isoformat(timespec="seconds")
+
+
+def _gog_help_contains(flag: str, help_text: str) -> bool:
+    return flag in help_text
+
+
+def _run(cmd: list[str], *, capture: bool = False) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd,
+        check=False,
+        text=True,
+        capture_output=capture,
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Create a Google Calendar event (Ana organizer, Jony invited) via gog."
+    )
+    parser.add_argument("--calendar-id", default="primary")
+    parser.add_argument("--summary", required=True)
+    parser.add_argument("--start", required=True, help='Local datetime: "YYYY-MM-DD HH:MM"')
+    parser.add_argument("--duration-minutes", type=int, default=30)
+    parser.add_argument("--location", default=None)
+    parser.add_argument("--notes", default=None)
+    parser.add_argument("--rrule", default=None, help='RFC5545 RRULE, e.g. "FREQ=WEEKLY;BYDAY=TU"')
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+
+    if args.calendar_id != "primary":
+        print('Only --calendar-id=primary is allowed', file=sys.stderr)
+        return 2
+
+    people = _load_people_config()
+    tz = people.timezone
+    os.environ.setdefault("TZ", tz)
+
+    start_dt = _parse_local_dt(args.start, tz)
+    end_dt = start_dt + timedelta(minutes=int(args.duration_minutes))
+
+    gog_bin = os.environ.get("GOG_BIN") or "gog"
+
+    # Discover optional flags.
+    help_proc = _run([gog_bin, "calendar", "create", "--help"], capture=True)
+    help_text = (help_proc.stdout or "") + "\n" + (help_proc.stderr or "")
+    if help_proc.returncode != 0 and not help_text.strip():
+        print("Could not execute gog; is it installed and on PATH?", file=sys.stderr)
+        return 3
+
+    attendee_flag = None
+    for candidate in ("--attendees", "--attendee"):
+        if _gog_help_contains(candidate, help_text):
+            attendee_flag = candidate
+            break
+
+    if attendee_flag is None:
+        print(
+            "gog calendar create does not appear to support attendees; cannot invite Jony.\n"
+            "Use scripts/c3po-calendar.ts instead (primary wrapper).\n"
+            "Run `gog calendar create --help` and update this wrapper accordingly.",
+            file=sys.stderr,
+        )
+        return 4
+
+    cmd: list[str] = [
+        gog_bin,
+        "calendar",
+        "create",
+        args.calendar_id,
+        "--summary",
+        args.summary,
+        "--from",
+        _iso(start_dt),
+        "--to",
+        _iso(end_dt),
+        attendee_flag,
+        people.jony_email,
+    ]
+
+    # Best-effort extras (only if flags exist).
+    for candidate in ("--send-updates", "--sendUpdates"):
+        if _gog_help_contains(candidate, help_text):
+            cmd += [candidate, "all"]
+            break
+    if args.location and _gog_help_contains("--location", help_text):
+        cmd += ["--location", args.location]
+    if args.notes and _gog_help_contains("--description", help_text):
+        cmd += ["--description", args.notes]
+    if args.rrule and _gog_help_contains("--rrule", help_text):
+        cmd += ["--rrule", args.rrule]
+
+    if args.dry_run:
+        print(" ".join(cmd))
+        return 0
+
+    proc = _run(cmd, capture=True)
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr or "")
+        sys.stderr.write(proc.stdout or "")
+        return proc.returncode or 1
+
+    sys.stdout.write(proc.stdout or "")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

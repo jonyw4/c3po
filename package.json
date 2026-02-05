@@ -1,0 +1,20 @@
+{
+  "name": "nunes-celio-c3po",
+  "version": "0.1.0",
+  "private": true,
+  "description": "C3PO — Family agent (OpenClaw workspace)",
+  "type": "module",
+  "scripts": {
+    "check-config": "bun scripts/check-config.ts",
+    "render-files": "bun scripts/render-files.ts",
+    "archive-memory": "bun scripts/archive-memory.ts --days 90",
+    "calendar:dry-run": "bun scripts/c3po-calendar.ts --dry-run",
+    "calendar:setup": "bun scripts/c3po-calendar.ts --setup"
+  },
+  "dependencies": {
+    "googleapis": "^144.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

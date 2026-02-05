@@ -1,0 +1,3 @@
+# Routines
+
+- (example) Morning routine: …

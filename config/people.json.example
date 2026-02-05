@@ -1,0 +1,22 @@
+{
+  "timezone": "America/Sao_Paulo",
+  "people": {
+    "jony": {
+      "displayName": "Jony",
+      "whatsappE164": "+55XXXXXXXXXXX",
+      "email": "jony@example.com"
+    },
+    "ana": {
+      "displayName": "Ana",
+      "whatsappE164": "+55YYYYYYYYYYY",
+      "email": "ana@example.com"
+    }
+  },
+  "group": {
+    "displayName": "Family (Jony + Ana + C3PO)",
+    "whatsappJid": "00000000000000-0000000000@g.us"
+  },
+  "triggers": {
+    "prefixes": ["c3po,"]
+  }
+}

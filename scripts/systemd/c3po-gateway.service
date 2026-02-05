@@ -1,0 +1,16 @@
+[Unit]
+Description=OpenClaw Gateway (C3PO family agent)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/ABSOLUTE/PATH/TO/THIS/REPO
+ExecStart=/usr/bin/env openclaw gateway --port 18789
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
+Environment=TZ=America/Sao_Paulo
+
+[Install]
+WantedBy=default.target
