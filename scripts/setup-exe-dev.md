@@ -25,13 +25,55 @@ ssh exe.dev new --name c3po
 ssh c3po.exe.xyz
 ```
 
-## 3) Clone the repo
+## 3) Setup Git (deploy key + identity)
+
+The bot needs write access to push workspace backups (kb/ + memory/).
+A deploy key gives access to **this repo only** (not your whole GitHub account).
+
+### 3.1 Generate SSH key on the VM
 
 ```bash
-# Create a fine-grained token on GitHub (read-only for this repo)
-# https://github.com/settings/personal-access-tokens/new
+ssh-keygen -t ed25519 -C "c3po-bot" -f ~/.ssh/c3po-deploy -N ""
+```
 
-git clone https://<TOKEN>@github.com/<ORG>/nunes-celio-c3po.git ~/nunes-celio-c3po
+### 3.2 Add the public key to GitHub
+
+```bash
+# Show the public key (copy the output)
+cat ~/.ssh/c3po-deploy.pub
+```
+
+Go to: https://github.com/jonyw4/c3po/settings/keys
+→ **Add deploy key** → paste the public key → check **"Allow write access"** → Save
+
+### 3.3 Configure SSH to use the key
+
+```bash
+cat >> ~/.ssh/config << 'EOF'
+Host github.com
+  IdentityFile ~/.ssh/c3po-deploy
+  IdentitiesOnly yes
+EOF
+```
+
+### 3.4 Configure git identity
+
+```bash
+git config --global user.name "C3PO (bot)"
+git config --global user.email "c3po@nunes-celio.family"
+```
+
+### 3.5 Verify authentication
+
+```bash
+ssh -T git@github.com
+# Expected: "Hi jonyw4/c3po! You've been successfully authenticated..."
+```
+
+### 3.6 Clone the repo
+
+```bash
+git clone git@github.com:jonyw4/c3po.git ~/nunes-celio-c3po
 cd ~/nunes-celio-c3po
 ```
 
@@ -137,11 +179,14 @@ Verify:
 
 ## 12) Final verification
 
+- [ ] `ssh -T git@github.com` authenticates as `jonyw4/c3po`
+- [ ] `git push --dry-run` succeeds (no errors)
 - [ ] Bot responds to DMs from Jony and Ana
 - [ ] Bot ignores DMs from other numbers
 - [ ] Bot responds in group with `c3po,` or @mention
 - [ ] Bot ignores messages without trigger in group
-- [ ] `systemctl --user list-timers` shows archive and watchdog
+- [ ] `systemctl --user list-timers` shows archive, watchdog, and workspace-backup
+- [ ] `openclaw browser start && openclaw browser open https://example.com && openclaw browser snapshot` works
 - [ ] (if calendar configured) "c3po, marca jantar sexta 20h" works
 
 ## Maintenance
