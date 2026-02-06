@@ -6,7 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/ABSOLUTE/PATH/TO/THIS/REPO
-ExecStart=/usr/bin/env openclaw gateway --port 18789
+EnvironmentFile=-%h/.config/c3po/.env
+ExecStart=/usr/bin/env openclaw gateway --port ${GATEWAY_PORT:-18789} --auth-password ${GATEWAY_PASSWORD}
 Restart=always
 RestartSec=10
 Environment=NODE_ENV=production

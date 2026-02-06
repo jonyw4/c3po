@@ -49,6 +49,36 @@ function main(): number {
     process.env.TZ = process.env.TZ || tz;
   }
 
+  // Safety: warn if the remote repo is public (memory/kb may contain personal data)
+  const remoteUrl = run("git remote get-url origin", REPO_ROOT);
+  if (remoteUrl) {
+    const match = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)/);
+    if (match) {
+      const [, owner, repo] = match;
+      try {
+        const visibility = execSync(
+          `gh api repos/${owner}/${repo} --jq .visibility`,
+          { cwd: REPO_ROOT, encoding: "utf-8", timeout: 15_000 }
+        ).trim();
+        if (visibility === "public") {
+          console.log(
+            JSON.stringify({
+              action: "abort",
+              reason: "repo is public — refusing to push personal data",
+              hint: `Run: gh repo edit ${owner}/${repo} --visibility private`,
+            })
+          );
+          return 1;
+        }
+      } catch {
+        // gh CLI not available or API error — log warning but continue
+        console.error(
+          "WARNING: could not verify repo visibility. Ensure the remote repo is private."
+        );
+      }
+    }
+  }
+
   // Check for changes in tracked paths
   const status = run("git status --porcelain -- memory/ kb/", REPO_ROOT);
 

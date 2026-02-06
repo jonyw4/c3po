@@ -16,6 +16,9 @@ config/people.json
 openclaw/*.local.*
 scripts/systemd/*.local.*
 
+# Gateway env file with secrets
+.config/c3po/.env
+
 # Python (fallback script)
 __pycache__/
 *.pyc
