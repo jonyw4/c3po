@@ -1,12 +1,13 @@
 ---
 name: family-agent
-description: Routines and guardrails for the family agent (WhatsApp + cron + KB + calendar/reminders).
+description: Routines and guardrails for the family agent (WhatsApp + cron + KB + calendar/reminders + browser).
 tags:
   - family
   - whatsapp
   - cron
   - calendar
   - reminders
+  - browser
 ---
 
 # Skill: Family agent
@@ -51,3 +52,22 @@ Operate only within the closed scope defined in `AGENTS.md`.
   3) Execute `bun scripts/c3po-calendar.ts ...` (or `scripts/c3po-calendar-create` as fallback)
   4) Reply "Confirmado: …" with explicit date/time
   5) Record in `memory/YYYY-MM-DD.md`
+
+## Browser (web automation)
+
+- Goal: perform web tasks on behalf of the couple using headless Chromium.
+- Examples: check a website for information, fill out a form, download a PDF, look up prices, etc.
+- Flow:
+  1) Understand what the user wants to do on the web
+  2) Navigate to the target URL using `browser navigate`
+  3) Use `browser snapshot` to read the page (accessibility tree — preferred over screenshots)
+  4) Interact with elements using refs from the snapshot (`browser act click <ref>`, `browser act fill <ref> "text"`)
+  5) If the action involves submitting a form or downloading, ask for confirmation (YES/NO)
+  6) Report the result back to the user
+  7) Record in `memory/YYYY-MM-DD.md` (URL, action, result)
+- Security rules:
+  - Never enter passwords, credentials, CPF/RG, or financial data
+  - Never access banking, payment, or financial sites
+  - Never make purchases or transactions
+  - If a site requires login, tell the user and do not proceed
+  - Prefer `snapshot` over `screenshot` (faster, cheaper in tokens)

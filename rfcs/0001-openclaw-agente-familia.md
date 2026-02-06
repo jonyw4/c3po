@@ -14,8 +14,9 @@ Criar um “agente de família” que opere principalmente pelo WhatsApp (DM + g
 - criar “lembretes” como mensagens agendadas no WhatsApp (por enquanto)
 - consultar uma base de conhecimento (KB) da família em arquivos Markdown
 - manter memória operacional do dia (decisões, compromissos, pendências), com privacidade e segurança
+- navegar na web via browser headless para executar tarefas como consultar sites, preencher formulários, baixar PDFs, etc.
 
-O objetivo principal é **reduzir atrito** em organização do casal, sem virar um “bot genérico” com acesso amplo ao sistema.
+O objetivo principal é **reduzir atrito** em organização do casal, sem virar um "bot genérico" com acesso amplo ao sistema.
 
 ## 2) Features (escopo fechado)
 
@@ -62,7 +63,26 @@ O objetivo principal é **reduzir atrito** em organização do casal, sem virar 
 - Registrar decisões duráveis (ex.: “o pediatra é X”, “preferimos tal restaurante”) em arquivos de KB, não em memória livre.
 - Futuro (v2): publicar/editar KB em Notion, mantendo uma cópia exportada para Markdown no workspace.
 
-### 2.6 Memória diária (operacional)
+### 2.7 Browser (navegação web)
+- Navegar na web usando browser headless (Chromium via Playwright) para executar tarefas em nome do casal.
+- Exemplos: consultar sites (escola, condomínio, lojas), preencher formulários, baixar documentos (boletos, PDFs), pesquisar preços.
+- Fluxo:
+  1) Entender o pedido do usuário
+  2) Navegar até o site alvo
+  3) Usar `snapshot` (accessibility tree) para ler a página
+  4) Interagir com elementos via refs do snapshot
+  5) Se envolver submissão de formulário ou download, pedir confirmação (SIM/NÃO)
+  6) Reportar resultado ao usuário
+  7) Registrar em `memory/YYYY-MM-DD.md`
+- Segurança:
+  - Nunca inserir senhas, credenciais, CPF/RG ou dados financeiros
+  - Nunca acessar sites de banco, pagamento ou financeiros
+  - Nunca fazer compras ou transações
+  - Se o site exigir login, informar o usuário e não prosseguir
+- Configuração: ver `openclaw/openclaw.json5.example` (bloco `browser:`)
+- Requisitos na VM: Playwright + Chromium instalados (ver `deploy/exe-dev-setup.sh`)
+
+### 2.8 Memória diária (operacional)
 - Registrar memória operacional ao longo do uso (principalmente após ações):
   - lembretes agendados (cron)
   - eventos criados/atualizados (calendário)
@@ -72,11 +92,13 @@ O objetivo principal é **reduzir atrito** em organização do casal, sem virar 
 
 ## 3) Não-objetivos (fora de escopo)
 
-- Acessar bancos, serviços financeiros, compras, transferências, PIX, etc.
-- “Operar o computador” com exec arbitrário.
+- Acessar bancos, serviços financeiros, compras, transferências, PIX, etc. (inclusive via browser).
+- "Operar o computador" com exec arbitrário.
 - Responder terceiros fora da allowlist.
-- Fazer “assistente geral” (pesquisa aberta, redes sociais, automações perigosas).
+- Fazer "assistente geral" (automações perigosas, redes sociais).
 - Armazenar segredos no workspace (senhas, tokens, chaves privadas).
+- Inserir senhas, credenciais ou dados financeiros em sites via browser.
+- Fazer login em sites que exijam autenticação (informar o usuário e não prosseguir).
 
 ## 4) O que precisamos para dar certo
 
@@ -100,7 +122,7 @@ Futuro:
 - Allowlist de números para DM.
 - Allowlist de grupos permitidos.
 - Ativação por menção/prefixo (evitar “always” no grupo).
-- “Least privilege” no conjunto de tools: apenas o necessário (cron, leitura/escrita em workspace, calendário/reminders).
+- "Least privilege" no conjunto de tools: apenas o necessário (cron, leitura/escrita em workspace, calendário/reminders, browser com restrições).
 - Confirmação humana antes de ações com maior risco (ex.: criação de evento).
 - Logs/memória sem dados sensíveis.
 
@@ -149,6 +171,11 @@ Mesmo não sendo obrigatório para “funcionar”, o repositório ajuda a:
    - uma skill com tool(s) específicas para Google Calendar (owner: Ana; convidado: Jony)
    - (futuro) CalDAV/Apple Reminders conforme necessidade
 
+4) **Browser (headless Chromium)**
+   - browser tool nativa do OpenClaw com Playwright
+   - headless mode para automação sem GUI
+   - `evaluateEnabled: false` para segurança
+
 4) **Registro de identidades (Jony/Ana)**
    - mapeia: WhatsApp ↔ pessoa ↔ e-mail Google (convidados)
    - evita “lembrar errado” e define destinos de DM
@@ -159,8 +186,8 @@ Definir dois agentes (opcional, mas recomendado):
 - `main` (privado): usado só por DM do owner para manutenção/diagnóstico (sem estar em grupo).
 
 ### 5.3 Guardrails do `family`
-- Só executa: `cron` (mensagens/lembretes), `calendar` (Google), leitura KB, escrita em `memory/`.
-- Qualquer pedido fora do escopo → recusa + sugere alternativa (“posso agendar lembrete, criar evento no calendário, consultar/atualizar KB”).
+- Só executa: `cron` (mensagens/lembretes), `calendar` (Google), leitura KB, escrita em `memory/`, `browser` (com restrições).
+- Qualquer pedido fora do escopo → recusa + sugere alternativa ("posso agendar lembrete, criar evento no calendário, consultar/atualizar KB, navegar na web").
 - Calendário: sempre pede confirmação explícita (SIM/NAO) antes de criar.
 - Lembretes via WhatsApp: não exige confirmação obrigatória, mas sempre envia ACK com resumo e data/hora explícitas.
 
@@ -187,7 +214,16 @@ Definir dois agentes (opcional, mas recomendado):
 3) Responder com ACK (“Confirmado: …”) com data/hora explícitas e destino.
 4) Registrar em memória diária.
 
-### 6.4 “Qual é o pediatra?” / “Qual a rotina do banho?”
+### 6.4 "Entra no site do condomínio e pega a segunda via do boleto"
+1) Navegar até o site do condomínio (URL da KB ou fornecida pelo usuário).
+2) Usar `snapshot` para ler a página e identificar links/botões relevantes.
+3) Interagir com os elementos para chegar até o boleto.
+4) Se exigir login: informar o usuário ("Esse site precisa de login, não consigo prosseguir") e parar.
+5) Se encontrar o PDF/link de download: pedir confirmação (SIM/NÃO) antes de baixar.
+6) Enviar o resultado (link ou informação) de volta no WhatsApp.
+7) Registrar em `memory/YYYY-MM-DD.md`.
+
+### 6.5 "Qual é o pediatra?" / "Qual a rotina do banho?"
 1) Buscar em `kb/` (preferência: arquivo mais específico).
 2) Responder com a informação e apontar onde está registrado.
 3) Se não existir: perguntar se deve registrar e em qual arquivo.
@@ -223,7 +259,8 @@ Definir dois agentes (opcional, mas recomendado):
 - WhatsApp (DM + grupo) com políticas (allowlist e ativação por menção/padrão).
 - Cron do Gateway para jobs agendados.
 - Memória em arquivos (`memory/YYYY-MM-DD.md`) e busca em Markdown.
-- Skills como mecanismo de “cola”/integração e tool wrappers.
+- Skills como mecanismo de "cola"/integração e tool wrappers.
+- Browser tool nativa (headless Chromium via CDP + Playwright): navigate, snapshot, screenshot, act, pdf.
 
 ### Precisaremos desenvolver/configurar (cola do fluxo)
 - “Skill do casal” (`skills/family-agent`) com:

@@ -66,26 +66,50 @@ else
     echo "Dependencies already installed."
 fi
 
-# --- 5. Set timezone ---
-echo "--- [5/8] Setting timezone to America/Sao_Paulo..."
+# --- 5. Install Playwright + Chromium (for browser automation) ---
+echo "--- [5/10] Installing Playwright and Chromium..."
+
+if npx playwright --version >/dev/null 2>&1; then
+    echo "Playwright already installed."
+else
+    npm install -g playwright
+    echo "Playwright installed."
+fi
+
+# Install Chromium browser binary (needed for headless automation).
+npx playwright install --with-deps chromium 2>/dev/null || npx playwright install chromium
+echo "Chromium browser installed for Playwright."
+
+# --- 6. Set timezone ---
+echo "--- [6/10] Setting timezone to America/Sao_Paulo..."
 
 sudo timedatectl set-timezone America/Sao_Paulo 2>/dev/null || echo "Could not set timezone (non-fatal)."
 
-# --- 6. Render config files ---
-echo "--- [6/8] Rendering config files..."
+# --- 7. Render config files ---
+echo "--- [7/10] Rendering config files..."
 
 bun "$REPO_DIR/scripts/render-files.ts"
 
-# --- 7. Deploy OpenClaw config ---
-echo "--- [7/8] Deploying OpenClaw config..."
+# --- 8. Deploy OpenClaw config ---
+echo "--- [8/10] Deploying OpenClaw config..."
 
 mkdir -p ~/.openclaw
 cp "$REPO_DIR/openclaw/openclaw.json5.local" ~/.openclaw/openclaw.json
 cp "$REPO_DIR/openclaw/exec-approvals.local.json" ~/.openclaw/exec-approvals.json
 echo "Config copied to ~/.openclaw/"
 
-# --- 8. Install systemd services ---
-echo "--- [8/8] Installing systemd services..."
+# --- 9. Verify browser setup ---
+echo "--- [9/10] Verifying browser setup..."
+
+if openclaw browser start --headless 2>/dev/null; then
+    echo "Browser started successfully (headless)."
+    openclaw browser stop 2>/dev/null || true
+else
+    echo "WARNING: Could not start browser (non-fatal). Verify after setup."
+fi
+
+# --- 10. Install systemd services ---
+echo "--- [10/10] Installing systemd services..."
 
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 mkdir -p "$SYSTEMD_DIR"
@@ -111,6 +135,14 @@ if [ -f "$REPO_DIR/scripts/systemd/c3po-watchdog.timer" ]; then
     cp "$REPO_DIR/scripts/systemd/c3po-watchdog.timer" "$SYSTEMD_DIR/c3po-watchdog.timer"
 fi
 
+# Workspace backup (daily git commit + push of kb/ and memory/)
+if [ -f "$REPO_DIR/scripts/systemd/c3po-workspace-backup.local.service" ]; then
+    cp "$REPO_DIR/scripts/systemd/c3po-workspace-backup.local.service" "$SYSTEMD_DIR/c3po-workspace-backup.service"
+fi
+if [ -f "$REPO_DIR/scripts/systemd/c3po-workspace-backup.timer" ]; then
+    cp "$REPO_DIR/scripts/systemd/c3po-workspace-backup.timer" "$SYSTEMD_DIR/c3po-workspace-backup.timer"
+fi
+
 # Reload and enable
 systemctl --user daemon-reload
 
@@ -122,6 +154,8 @@ systemctl --user enable c3po-memory-archive.timer 2>/dev/null || true
 systemctl --user start c3po-memory-archive.timer 2>/dev/null || true
 systemctl --user enable c3po-watchdog.timer 2>/dev/null || true
 systemctl --user start c3po-watchdog.timer 2>/dev/null || true
+systemctl --user enable c3po-workspace-backup.timer 2>/dev/null || true
+systemctl --user start c3po-workspace-backup.timer 2>/dev/null || true
 
 echo ""
 echo "=== Setup complete! ==="
@@ -134,6 +168,7 @@ echo "  4. Re-render:         bun scripts/render-files.ts"
 echo "  5. Re-copy config:    cp openclaw/openclaw.json5.local ~/.openclaw/openclaw.json"
 echo "  6. Start gateway:     openclaw gateway --port 18789"
 echo "     (or: systemctl --user enable --now c3po-gateway)"
-echo "  7. Test:              Send a WhatsApp message to the bot"
+echo "  7. Test WhatsApp:     Send a WhatsApp message to the bot"
+echo "  8. Test browser:      openclaw browser start && openclaw browser open https://example.com && openclaw browser snapshot"
 echo ""
 echo "For Google Calendar setup, see: scripts/setup-exe-dev.md"

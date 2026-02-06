@@ -55,4 +55,16 @@
       mentionPatterns: ["^(?:c3po),\\s+"],
     },
   },
+
+  // --- Browser (headless Chromium for web automation) ---
+  browser: {
+    enabled: true,
+    headless: true,
+    defaultProfile: "openclaw",
+    // Security: disable arbitrary JS evaluation in production.
+    evaluateEnabled: false,
+    profiles: {
+      openclaw: { cdpPort: 18800, color: "#FF4500" },
+    },
+  },
 }
