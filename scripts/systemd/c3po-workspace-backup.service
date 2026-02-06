@@ -1,0 +1,7 @@
+[Unit]
+Description=Auto-commit and push C3PO workspace changes (kb + memory)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/ABSOLUTE/PATH/TO/THIS/REPO
+ExecStart=/usr/bin/env bun /ABSOLUTE/PATH/TO/THIS/REPO/scripts/workspace-backup.ts

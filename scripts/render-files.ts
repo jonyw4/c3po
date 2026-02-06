@@ -43,6 +43,7 @@ function main(): number {
     ["scripts/systemd/c3po-memory-archive.timer", "scripts/systemd/c3po-memory-archive.local.timer"],
     ["scripts/systemd/c3po-gateway.service", "scripts/systemd/c3po-gateway.local.service"],
     ["scripts/systemd/c3po-watchdog.service", "scripts/systemd/c3po-watchdog.local.service"],
+    ["scripts/systemd/c3po-workspace-backup.service", "scripts/systemd/c3po-workspace-backup.local.service"],
   ];
 
   const written: string[] = [];

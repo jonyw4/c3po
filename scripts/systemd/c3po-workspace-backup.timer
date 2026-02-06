@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily backup of C3PO workspace to Git remote
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

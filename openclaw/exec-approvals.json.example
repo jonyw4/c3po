@@ -21,6 +21,9 @@
         },
         {
           "pattern": "/ABSOLUTE/PATH/TO/THIS/REPO/scripts/archive-memory.ts"
+        },
+        {
+          "pattern": "/ABSOLUTE/PATH/TO/THIS/REPO/scripts/workspace-backup.ts"
         }
       ]
     }
