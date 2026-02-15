@@ -20,6 +20,9 @@
           "pattern": "/ABSOLUTE/PATH/TO/THIS/REPO/scripts/c3po-calendar-create"
         },
         {
+          "pattern": "/ABSOLUTE/PATH/TO/THIS/REPO/scripts/c3po-tasks.ts"
+        },
+        {
           "pattern": "/ABSOLUTE/PATH/TO/THIS/REPO/scripts/archive-memory.ts"
         },
         {
