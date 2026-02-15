@@ -7,15 +7,12 @@
     defaults: {
       // Use this repository as workspace (KB + memory + guardrails).
       workspace: "/ABSOLUTE/PATH/TO/THIS/REPO",
-      // User timezone to interpret "tomorrow", "friday", etc.
-      userTimezone: "America/Sao_Paulo",
     },
     // Define a stable agent id for use in Exec Approvals.
     list: [
       {
         id: "c3po",
         workspace: "/ABSOLUTE/PATH/TO/THIS/REPO",
-        userTimezone: "America/Sao_Paulo",
         groupChat: {
           mentionPatterns: ["^(?:c3po),\\s+"],
         },
@@ -25,9 +22,6 @@
 
   channels: {
     whatsapp: {
-      enabled: true,
-      accountName: "family",
-
       // DMs: only the couple (allowlist by number).
       dmPolicy: "allowlist",
       // Use the numbers from `config/people.json`.
@@ -42,11 +36,6 @@
         "00000000000000-0000000000@g.us": { requireMention: false },
       },
     },
-  },
-
-  // Index KB in memory search.
-  memorySearch: {
-    extraPaths: ["kb"],
   },
 
   // Allow prefix/regex in group in addition to @mention.

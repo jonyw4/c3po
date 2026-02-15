@@ -1,11 +1,10 @@
 #!/usr/bin/env bun
 /**
- * c3po-calendar.ts — Creates events on Ana's Google Calendar and invites Jony.
+ * c3po-calendar.ts — Read and create events on Google Calendar.
  *
  * Uses the Google Calendar API directly via `googleapis` (npm).
- * This is the primary wrapper (fallback is c3po-calendar-create via gog).
  *
- * Usage:
+ * Usage (create):
  *   bun scripts/c3po-calendar.ts \
  *     --summary "Dinner" \
  *     --start "2026-02-10 20:00" \
@@ -14,6 +13,12 @@
  *     [--notes "Reservation confirmed"] \
  *     [--rrule "FREQ=WEEKLY;BYDAY=TU"] \
  *     [--dry-run]
+ *
+ * Usage (list):
+ *   bun scripts/c3po-calendar.ts --list \
+ *     [--from "YYYY-MM-DD"] \
+ *     [--to "YYYY-MM-DD"] \
+ *     [--calendar-id "email@example.com"]
  *
  * Requires:
  *   - bun install googleapis
@@ -97,6 +102,8 @@ function parseArgs(args: string[]): Record<string, string | boolean> {
       result["dryRun"] = true;
     } else if (arg === "--setup") {
       result["setup"] = true;
+    } else if (arg === "--list") {
+      result["list"] = true;
     } else if (arg.startsWith("--")) {
       const key = arg.slice(2).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
       const nextArg = args[i + 1];
@@ -215,6 +222,52 @@ async function main() {
   // Setup mode
   if (args.setup) {
     await setupOAuth();
+    return;
+  }
+
+  // List mode
+  if (args.list) {
+    const people = loadPeople();
+    const auth = await authorize();
+    const calendar = google.calendar({ version: "v3", auth });
+
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+
+    const fromStr = String(args.from || todayStr);
+    const toDate = args.to
+      ? new Date(String(args.to) + "T23:59:59")
+      : new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const toStr = `${toDate.getFullYear()}-${pad(toDate.getMonth() + 1)}-${pad(toDate.getDate())}`;
+
+    const calendarId = String(args.calendarId || "primary");
+
+    const res = await calendar.events.list({
+      calendarId,
+      timeMin: new Date(fromStr + "T00:00:00").toISOString(),
+      timeMax: new Date(toStr + "T23:59:59").toISOString(),
+      singleEvents: true,
+      orderBy: "startTime",
+      maxResults: 50,
+      timeZone: people.timezone,
+    });
+
+    const events = (res.data.items || []).map((e) => ({
+      summary: e.summary || "(sem título)",
+      start: e.start?.dateTime || e.start?.date || "",
+      end: e.end?.dateTime || e.end?.date || "",
+      location: e.location || null,
+      attendees: e.attendees?.map((a) => a.email) || [],
+    }));
+
+    console.log(
+      JSON.stringify(
+        { events, count: events.length, range: { from: fromStr, to: toStr } },
+        null,
+        2
+      )
+    );
     return;
   }
 
