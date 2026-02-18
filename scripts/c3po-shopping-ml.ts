@@ -284,10 +284,26 @@ async function searchML(
 async function main() {
   const opts = parseArgs();
 
-  // A API de busca do ML é pública — não requer token
+  // ML bloqueia IPs de servidor sem autenticação — token obrigatório
+  const appId = process.env.ML_APP_ID;
+  const appSecret = process.env.ML_APP_SECRET;
+  if (!appId || !appSecret) {
+    console.error(JSON.stringify({ error: "ML_APP_ID e ML_APP_SECRET são obrigatórios. Configure no ambiente." }));
+    process.exit(2);
+  }
+
+  let token: string;
+  try {
+    token = await getAppToken(appId, appSecret);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(JSON.stringify({ error: `Falha ao obter token ML: ${message}` }));
+    process.exit(2);
+  }
+
   let items: MLSearchResult[];
   try {
-    items = await searchML(opts.query, opts.limit, opts.maxPrice);
+    items = await searchML(opts.query, opts.limit, opts.maxPrice, token);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(JSON.stringify({ error: `Falha ao consultar ML API: ${message}` }));
