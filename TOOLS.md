@@ -41,6 +41,7 @@ Allowed scripts:
 - `scripts/c3po-tasks.ts` (Google Tasks — TypeScript wrapper)
 - `scripts/archive-memory.ts` (memory archival)
 - `scripts/workspace-backup.ts` (auto-commit and push kb/ + memory/ to Git)
+- `scripts/c3po-shopping-ml.ts` (busca produtos no Mercado Livre via API pública)
 
 Avoid any shell execution outside the allowlist.
 
@@ -79,6 +80,23 @@ ElevenLabs text-to-speech is available for sending WhatsApp voice notes.
 - Configuration: `messages.tts` block in `openclaw.json`
 - Requires `ELEVENLABS_API_KEY` environment variable
 
+## Shopping (Mercado Livre)
+
+O `c3po-shopping-ml` busca e ranqueia produtos no Mercado Livre Brasil via API pública (sem autenticação).
+
+Operações:
+- Busca por query: `bun scripts/c3po-shopping-ml.ts --query "TERMO"`
+- Com filtros: `bun scripts/c3po-shopping-ml.ts --query "TERMO" [--max-price X] [--min-rating 4.0] [--free-shipping] [--official-store] [--limit 20]`
+
+Saída: JSON com `{ query, total, filters_applied, results[] }` onde cada resultado contém:
+- `title`, `price`, `currency`, `condition`
+- `rating`, `reviews_total`
+- `free_shipping`, `estimated_delivery`
+- `seller_type` (official_store / mercadolider_platinum / gold / silver / regular)
+- `seller_name`, `permalink`, `score` (0–100)
+
+Para Amazon Brasil, usar o browser headless (navegar `amazon.com.br/s?k=query&s=price-asc-rank`).
+
 ## Skills
 
 Workspace skills in `skills/`:
@@ -87,3 +105,4 @@ Workspace skills in `skills/`:
 - `whatsapp-styling-guide` — WhatsApp-native formatting rules (no raw Markdown)
 - `clawlist` — Multi-step project planning and tracking for family tasks
 - `gtasks` — Google Tasks management (create, list, update, delete tasks)
+- `shopping-comparison` — Pesquisa e compara produtos no ML + Amazon, iterativamente até 5 opções
