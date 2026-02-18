@@ -105,39 +105,34 @@ The shopping skill calls the ML search API server-side. **ML blocks server IPs w
    - **Scopes**: `read` (leitura pública)
 4. Save → copy **App ID** and **Secret Key**
 
-### Get OAuth user token (authorization_code flow)
-
-The search API requires a user-level token. Steps to get it:
+### Set app credentials on the VM
 
 ```bash
-# Step 1 — Open this URL in your browser (replace values):
+echo 'export ML_APP_ID="YOUR_APP_ID"' >> ~/.bashrc
+echo 'export ML_APP_SECRET="YOUR_SECRET_KEY"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Get OAuth user token (one-time setup, auto-renews after)
+
+The search API requires a user-level token. The script manages this automatically
+after the first bootstrap:
+
+```bash
+# Step 1 — Open this URL in your browser (replace ML_APP_ID and REDIRECT_URI):
 # https://auth.mercadolivre.com.br/authorization?response_type=code
 #   &client_id=YOUR_APP_ID&redirect_uri=https://YOUR_REDIRECT_URI
-
+#
 # You'll be redirected to https://YOUR_REDIRECT_URI?code=TG-xxxx-USER_ID
 # Copy the "code" value (starts with TG-)
 
-# Step 2 — Exchange code for token:
-CODE="TG-xxxxx-xxxxxx"
-curl -X POST "https://api.mercadolibre.com/oauth/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=authorization_code&client_id=$ML_APP_ID&client_secret=$ML_APP_SECRET\
-&code=$CODE&redirect_uri=https://YOUR_REDIRECT_URI"
-
-# Copy the "access_token" from the response (starts with APP_USR-)
+# Step 2 — Run setup (saves access_token + refresh_token to ~/.config/c3po/ml-token.json):
+bun ~/nunes-celio-c3po/scripts/c3po-shopping-ml.ts \
+  --setup "TG-xxxx-USER_ID" "https://YOUR_REDIRECT_URI"
 ```
 
-### Set on the VM
-
-```bash
-# Required (app identity)
-echo 'export ML_APP_ID="YOUR_APP_ID"' >> ~/.bashrc
-echo 'export ML_APP_SECRET="YOUR_SECRET_KEY"' >> ~/.bashrc
-
-# Required (user OAuth token — renew every ~6h or when the script reports 403)
-echo 'export ML_ACCESS_TOKEN="APP_USR-xxxx"' >> ~/.bashrc
-source ~/.bashrc
-```
+After this, the script **renews the token automatically** before each search.
+No manual intervention needed — just re-run `--setup` if the refresh_token expires (~6 months).
 
 ### Test
 
@@ -250,7 +245,7 @@ Verify:
 - [ ] `systemctl --user list-timers` shows archive, watchdog, and workspace-backup
 - [ ] `openclaw browser start && openclaw browser open https://example.com && openclaw browser snapshot` works
 - [ ] (if calendar configured) "c3po, marca jantar sexta 20h" works
-- [ ] `ML_ACCESS_TOKEN` is set (obtained via ML OAuth authorization_code flow)
+- [ ] `bun scripts/c3po-shopping-ml.ts --setup TG-xxx https://URI` ran successfully (token cache created)
 - [ ] `bun scripts/c3po-shopping-ml.ts --query "liquidificador" --limit 3` returns JSON with results; if PolicyAgent 403, confirm browser fallback is working
 
 ## Maintenance
