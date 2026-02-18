@@ -392,14 +392,17 @@ async function searchML(
 
   if (resp.status === 403) {
     const body = await resp.text().catch(() => "");
-    const isPolicy = body.includes("PA_UNAUTHORIZED") || body.includes("PolicyAgent");
+    const isPolicy = body.includes("PA_UNAUTHORIZED") || body.includes("PolicyAgent") || body.includes("policyagent");
+    const isIPBlock = body.includes("blocked") || body.includes("access_restricted") || body.includes("forbidden");
     throw new Error(
-      isPolicy
-        ? `ML API bloqueada pelo PolicyAgent (403). ` +
-          `O IP do servidor está bloqueado para buscas via API. ` +
-          `Use busca via browser em mercadolivre.com.br como alternativa (ver AGENTS.md §Exec).`
-        : `ML API retornou 403. Token pode ter expirado — tente novamente (o script renova automaticamente). ` +
-          `Se persistir, reexecute --setup para obter novo refresh_token.`
+      isPolicy || isIPBlock
+        ? `ML API bloqueada por IP do servidor (403). ` +
+          `O IP da VM está bloqueado para buscas via API. ` +
+          `Use busca via browser em mercadolivre.com.br como alternativa (ver AGENTS.md §Exec). ` +
+          `Detalhe: ${body.slice(0, 200)}`
+        : `ML API retornou 403. Token pode ter expirado ou não tem escopo para busca. ` +
+          `Detalhe da resposta: ${body.slice(0, 300)}. ` +
+          `Se for erro de IP/servidor, use o browser. Se for token, reexecute --setup.`
     );
   }
 
