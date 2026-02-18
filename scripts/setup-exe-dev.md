@@ -91,6 +91,38 @@ echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.bashrc
 source ~/.bashrc
 ```
 
+## 5.1) Configure Mercado Livre API credentials
+
+The shopping skill uses the ML API server-side, which requires app credentials (the public API blocks server IPs with 403).
+
+### Get credentials (one-time setup)
+
+1. Go to https://developers.mercadolivre.com.br/
+2. Log in with your ML account → **Minhas Aplicações** → **Criar aplicação**
+3. Fill in:
+   - **Nome**: `c3po-shopping`
+   - **Descrição**: pesquisa de produtos
+   - **URI de redirect**: `https://localhost` (não usado, mas obrigatório)
+   - **Scopes**: nenhum necessário (apenas leitura pública)
+4. Save → copy **App ID** and **Secret Key**
+
+### Set on the VM
+
+```bash
+echo 'export ML_APP_ID="YOUR_APP_ID"' >> ~/.bashrc
+echo 'export ML_APP_SECRET="YOUR_SECRET_KEY"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Test
+
+```bash
+bun ~/nunes-celio-c3po/scripts/c3po-shopping-ml.ts \
+  --query "liquidificador" --max-price 150 --limit 3
+```
+
+Should return JSON with `results` array. If `"error"` field appears, recheck the credentials.
+
 ## 6) Run the automated setup
 
 ```bash
@@ -189,6 +221,7 @@ Verify:
 - [ ] `systemctl --user list-timers` shows archive, watchdog, and workspace-backup
 - [ ] `openclaw browser start && openclaw browser open https://example.com && openclaw browser snapshot` works
 - [ ] (if calendar configured) "c3po, marca jantar sexta 20h" works
+- [ ] `bun scripts/c3po-shopping-ml.ts --query "liquidificador" --limit 3` returns JSON with results (not an error)
 
 ## Maintenance
 

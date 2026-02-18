@@ -62,6 +62,8 @@ bun scripts/c3po-shopping-ml.ts \
 
 O script retorna JSON com produtos ranqueados por score. Use os resultados diretamente.
 
+> **Pré-requisito:** variáveis de ambiente `ML_APP_ID` e `ML_APP_SECRET` devem estar definidas no servidor — a ML API bloqueia chamadas server-side sem autenticação. Ver `scripts/setup-exe-dev.md` §5.1.
+
 #### Amazon Brasil (via browser)
 
 1. `browser navigate "https://www.amazon.com.br/s?k=TERMO_DE_BUSCA&s=price-asc-rank"`

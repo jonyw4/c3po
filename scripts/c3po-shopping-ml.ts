@@ -213,12 +213,37 @@ function calcScore(
   return Math.round(total * 100 * 10) / 10; // 0–100, 1 decimal
 }
 
+// --- Autenticação ML (client credentials) ---
+
+async function getAppToken(appId: string, appSecret: string): Promise<string> {
+  const resp = await fetch("https://api.mercadolibre.com/oauth/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Accept": "application/json",
+    },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: appId,
+      client_secret: appSecret,
+    }),
+  });
+
+  if (!resp.ok) {
+    throw new Error(`Falha ao obter token ML: ${resp.status} ${await resp.text()}`);
+  }
+
+  const data = await resp.json() as { access_token: string };
+  return data.access_token;
+}
+
 // --- Busca na API do ML ---
 
 async function searchML(
   query: string,
   limit: number,
-  maxPriceParam: number | null
+  maxPriceParam: number | null,
+  token?: string
 ): Promise<MLSearchResult[]> {
   const params = new URLSearchParams({
     q: query,
@@ -229,9 +254,22 @@ async function searchML(
 
   const url = `https://api.mercadolibre.com/sites/MLB/search?${params}`;
 
-  const resp = await fetch(url, {
-    headers: { "User-Agent": "c3po-family-agent/1.0" },
-  });
+  const headers: Record<string, string> = {
+    "User-Agent": "c3po-family-agent/1.0",
+    "Accept": "application/json",
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const resp = await fetch(url, { headers });
+
+  if (resp.status === 403) {
+    const hint = token
+      ? "Token inválido ou expirado."
+      : "Configure ML_APP_ID e ML_APP_SECRET no ambiente para autenticação.";
+    throw new Error(`ML API bloqueou a requisição (403). ${hint}`);
+  }
 
   if (!resp.ok) {
     throw new Error(`ML API retornou status ${resp.status}: ${await resp.text()}`);
@@ -246,9 +284,23 @@ async function searchML(
 async function main() {
   const opts = parseArgs();
 
+  // Autenticação via env vars (obrigatório para chamadas server-side)
+  let token: string | undefined;
+  const appId = process.env.ML_APP_ID;
+  const appSecret = process.env.ML_APP_SECRET;
+  if (appId && appSecret) {
+    try {
+      token = await getAppToken(appId, appSecret);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(JSON.stringify({ error: `Falha ao autenticar no ML: ${message}` }));
+      process.exit(2);
+    }
+  }
+
   let items: MLSearchResult[];
   try {
-    items = await searchML(opts.query, opts.limit, opts.maxPrice);
+    items = await searchML(opts.query, opts.limit, opts.maxPrice, token);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(JSON.stringify({ error: `Falha ao consultar ML API: ${message}` }));
