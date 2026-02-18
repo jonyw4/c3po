@@ -62,6 +62,10 @@ bun scripts/c3po-shopping-ml.ts \
 
 O script retorna JSON com produtos ranqueados por score. Use os resultados diretamente.
 
+> **Pré-requisito:** A ML API bloqueia chamadas server-side sem autenticação OAuth de usuário. Defina `ML_ACCESS_TOKEN` (preferido, obtido via authorization_code flow) OU `ML_APP_ID` + `ML_APP_SECRET` + `ML_REFRESH_TOKEN`. Ver `scripts/setup-exe-dev.md` §5.1 e `.env.example`.
+>
+> **Fallback (PolicyAgent 403):** Se o script retornar erro de PolicyAgent (IP do servidor bloqueado), faça a busca via browser em `https://www.mercadolivre.com.br/busca?as_word=TERMO&sort=price_asc` e extraia os resultados por snapshot. Informe o casal que a API ML estava temporariamente indisponível.
+
 #### Amazon Brasil (via browser)
 
 1. `browser navigate "https://www.amazon.com.br/s?k=TERMO_DE_BUSCA&s=price-asc-rank"`

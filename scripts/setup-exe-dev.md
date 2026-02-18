@@ -91,6 +91,62 @@ echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.bashrc
 source ~/.bashrc
 ```
 
+## 5.1) Configure Mercado Livre API credentials
+
+The shopping skill calls the ML search API server-side. **ML blocks server IPs without an OAuth user token** — a simple App ID + Secret is not enough.
+
+### Create the ML app (one-time)
+
+1. Go to https://developers.mercadolivre.com.br/
+2. Log in → **Minhas Aplicações** → **Criar aplicação**
+3. Fill in:
+   - **Nome**: `c3po-shopping`
+   - **URI de redirect**: any HTTPS URI you control (e.g. `https://mercadolivre.c`)
+   - **Scopes**: `read` (leitura pública)
+4. Save → copy **App ID** and **Secret Key**
+
+### Set app credentials on the VM
+
+```bash
+echo 'export ML_APP_ID="YOUR_APP_ID"' >> ~/.bashrc
+echo 'export ML_APP_SECRET="YOUR_SECRET_KEY"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Get OAuth user token (one-time setup, auto-renews after)
+
+The search API requires a user-level token. The script manages this automatically
+after the first bootstrap:
+
+```bash
+# Step 1 — Open this URL in your browser (replace ML_APP_ID and REDIRECT_URI):
+# https://auth.mercadolivre.com.br/authorization?response_type=code
+#   &client_id=YOUR_APP_ID&redirect_uri=https://YOUR_REDIRECT_URI
+#
+# You'll be redirected to https://YOUR_REDIRECT_URI?code=TG-xxxx-USER_ID
+# Copy the "code" value (starts with TG-)
+
+# Step 2 — Run setup (saves access_token + refresh_token to ~/.config/c3po/ml-token.json):
+bun ~/nunes-celio-c3po/scripts/c3po-shopping-ml.ts \
+  --setup "TG-xxxx-USER_ID" "https://YOUR_REDIRECT_URI"
+```
+
+After this, the script **renews the token automatically** before each search.
+No manual intervention needed — just re-run `--setup` if the refresh_token expires (~6 months).
+
+### Test
+
+```bash
+bun ~/nunes-celio-c3po/scripts/c3po-shopping-ml.ts \
+  --query "liquidificador" --max-price 150 --limit 3
+```
+
+Should return JSON with `results` array.
+
+### If the API still returns PolicyAgent 403
+
+The server IP may be blocked by ML. In that case C3PO falls back to browser-based ML search automatically (see AGENTS.md §Exec). No code changes needed — the agent handles the fallback.
+
 ## 6) Run the automated setup
 
 ```bash
@@ -189,6 +245,8 @@ Verify:
 - [ ] `systemctl --user list-timers` shows archive, watchdog, and workspace-backup
 - [ ] `openclaw browser start && openclaw browser open https://example.com && openclaw browser snapshot` works
 - [ ] (if calendar configured) "c3po, marca jantar sexta 20h" works
+- [ ] `bun scripts/c3po-shopping-ml.ts --setup TG-xxx https://URI` ran successfully (token cache created)
+- [ ] `bun scripts/c3po-shopping-ml.ts --query "liquidificador" --limit 3` returns JSON with results; if PolicyAgent 403, confirm browser fallback is working
 
 ## Maintenance
 

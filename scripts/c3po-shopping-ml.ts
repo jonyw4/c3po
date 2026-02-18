@@ -2,22 +2,34 @@
 /**
  * c3po-shopping-ml.ts — Busca e ranqueia produtos no Mercado Livre (Brasil).
  *
- * Usa a API pública do Mercado Livre (site MLB) — sem autenticação necessária.
+ * Usa a API do Mercado Livre (site MLB) com autenticação OAuth (usuário).
+ * Tokens são gerenciados automaticamente em ~/.config/c3po/ml-token.json.
  *
- * Uso básico:
+ * SETUP INICIAL (uma vez):
+ *   1. Gere o authorization URL:
+ *      https://auth.mercadolivre.com.br/authorization?response_type=code
+ *        &client_id=$ML_APP_ID&redirect_uri=https://SUA_URI
+ *   2. Faça login, copie o "code" (TG-xxx) da URL de redirect
+ *   3. Execute:
+ *      bun scripts/c3po-shopping-ml.ts \
+ *        --setup TG-xxx https://SUA_URI
+ *   Isso salva access_token + refresh_token no cache e renova automaticamente.
+ *
+ * USO NORMAL (após setup):
  *   bun scripts/c3po-shopping-ml.ts --query "liquidificador mondial"
- *
- * Com filtros:
  *   bun scripts/c3po-shopping-ml.ts \
- *     --query "liquidificador mondial" \
- *     --max-price 200 \
- *     --min-rating 4.0 \
- *     --free-shipping \
- *     --official-store \
- *     --limit 20
+ *     --query "liquidificador" --max-price 200 --min-rating 4.0 --limit 20
  *
- * Saída: JSON com array "results" de produtos ranqueados por score.
+ * NOTA: A API de busca do ML bloqueia IPs de servidor (PolicyAgent 403).
+ * Se o script retornar erro de PolicyAgent, use busca via browser em
+ * mercadolivre.com.br como alternativa (ver AGENTS.md §Shopping).
+ *
+ * Variáveis de ambiente necessárias: ML_APP_ID, ML_APP_SECRET.
+ * O token OAuth é gerenciado no cache — não é mais necessário ML_REFRESH_TOKEN.
  */
+
+import { mkdirSync, chmodSync } from "node:fs";
+import { dirname } from "node:path";
 
 // --- Tipos ---
 
@@ -82,17 +94,175 @@ interface RankedProduct {
   score: number;
 }
 
+// --- Token cache ---
+
+const TOKEN_CACHE_PATH = `${process.env.HOME}/.config/c3po/ml-token.json`;
+const ML_API = "https://api.mercadolibre.com";
+// Renova o token se expira em menos de 10 minutos
+const EXPIRY_BUFFER_MS = 10 * 60 * 1000;
+
+interface TokenCache {
+  access_token: string;
+  refresh_token: string;
+  expires_at: number; // timestamp Unix em ms
+}
+
+async function readTokenCache(): Promise<TokenCache | null> {
+  try {
+    const file = Bun.file(TOKEN_CACHE_PATH);
+    if (!(await file.exists())) return null;
+    return await file.json() as TokenCache;
+  } catch {
+    return null;
+  }
+}
+
+async function writeTokenCache(cache: TokenCache): Promise<void> {
+  const dir = dirname(TOKEN_CACHE_PATH);
+  mkdirSync(dir, { recursive: true });
+  await Bun.write(TOKEN_CACHE_PATH, JSON.stringify(cache, null, 2));
+  // Protege o arquivo: apenas o dono pode ler (tokens são sensíveis)
+  try { chmodSync(TOKEN_CACHE_PATH, 0o600); } catch { /* ignora em sistemas sem chmod */ }
+}
+
+async function exchangeCodeForTokens(
+  appId: string,
+  appSecret: string,
+  code: string,
+  redirectUri: string,
+): Promise<TokenCache> {
+  const resp = await fetch(`${ML_API}/oauth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: appId,
+      client_secret: appSecret,
+      code,
+      redirect_uri: redirectUri,
+    }),
+  });
+
+  const body = await resp.text();
+  if (!resp.ok) {
+    throw new Error(`ML rejeitou o code (${resp.status}): ${body}`);
+  }
+
+  const data = JSON.parse(body) as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in: number;
+  };
+
+  if (!data.refresh_token) {
+    throw new Error(
+      `ML não retornou refresh_token. Verifique se o app tem scope "offline_access" ` +
+      `ou se o code já foi usado. Resposta: ${body}`
+    );
+  }
+
+  return {
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+    expires_at: Date.now() + data.expires_in * 1000,
+  };
+}
+
+async function refreshAccessToken(
+  appId: string,
+  appSecret: string,
+  refreshToken: string,
+): Promise<TokenCache> {
+  const resp = await fetch(`${ML_API}/oauth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: appId,
+      client_secret: appSecret,
+      refresh_token: refreshToken,
+    }),
+  });
+
+  const body = await resp.text();
+  if (!resp.ok) {
+    throw new Error(
+      `Falha ao renovar token ML (${resp.status}): ${body}. ` +
+      `O refresh_token pode ter expirado. Reexecute --setup para obter um novo.`
+    );
+  }
+
+  const data = JSON.parse(body) as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in: number;
+  };
+
+  return {
+    access_token: data.access_token,
+    // ML rotaciona o refresh_token — usar o novo se vier, senão manter o anterior
+    refresh_token: data.refresh_token ?? refreshToken,
+    expires_at: Date.now() + data.expires_in * 1000,
+  };
+}
+
+/**
+ * Retorna um access_token válido.
+ * Verifica o cache, renova se necessário e salva o novo token.
+ */
+async function getValidToken(appId: string, appSecret: string): Promise<string> {
+  const cache = await readTokenCache();
+
+  if (!cache) {
+    throw new Error(
+      `Cache de token ML não encontrado em ${TOKEN_CACHE_PATH}. ` +
+      `Execute primeiro: bun scripts/c3po-shopping-ml.ts --setup TG-xxx https://SUA_URI`
+    );
+  }
+
+  // Token ainda válido (com margem de 10 min)
+  if (cache.access_token && cache.expires_at > Date.now() + EXPIRY_BUFFER_MS) {
+    return cache.access_token;
+  }
+
+  // Token expirado ou prestes a expirar — renovar
+  const newCache = await refreshAccessToken(appId, appSecret, cache.refresh_token);
+  await writeTokenCache(newCache);
+  return newCache.access_token;
+}
+
 // --- Parsing de args ---
 
-function parseArgs(): {
-  query: string;
-  maxPrice: number | null;
-  minRating: number;
-  freeShipping: boolean;
-  officialStore: boolean;
-  limit: number;
-} {
+type Args =
+  | { mode: "setup"; code: string; redirectUri: string }
+  | {
+      mode: "search";
+      query: string;
+      maxPrice: number | null;
+      minRating: number;
+      freeShipping: boolean;
+      officialStore: boolean;
+      limit: number;
+    };
+
+function parseArgs(): Args {
   const args = process.argv.slice(2);
+
+  // Modo setup: --setup CODE REDIRECT_URI
+  const setupIdx = args.indexOf("--setup");
+  if (setupIdx !== -1) {
+    const code = args[setupIdx + 1];
+    const redirectUri = args[setupIdx + 2];
+    if (!code || !redirectUri) {
+      console.error(JSON.stringify({
+        error: "Uso: --setup CODE REDIRECT_URI",
+        example: 'bun scripts/c3po-shopping-ml.ts --setup TG-xxx https://mercadolivre.c',
+      }));
+      process.exit(1);
+    }
+    return { mode: "setup", code, redirectUri };
+  }
+
   const get = (flag: string): string | null => {
     const i = args.indexOf(flag);
     return i !== -1 && args[i + 1] ? args[i + 1] : null;
@@ -101,11 +271,15 @@ function parseArgs(): {
 
   const query = get("--query");
   if (!query) {
-    console.error(JSON.stringify({ error: "Parâmetro --query é obrigatório." }));
+    console.error(JSON.stringify({
+      error: "Parâmetro --query é obrigatório.",
+      setup_hint: "Para configurar o token ML: bun scripts/c3po-shopping-ml.ts --setup TG-xxx https://SUA_URI",
+    }));
     process.exit(1);
   }
 
   return {
+    mode: "search",
     query,
     maxPrice: get("--max-price") ? Number(get("--max-price")) : null,
     minRating: get("--min-rating") ? Number(get("--min-rating")) : 4.0,
@@ -123,35 +297,20 @@ function estimateDelivery(item: MLSearchResult): { label: string; ok: boolean } 
     ?? item.seller?.reputation?.power_seller_status
     ?? null;
 
-  // Fulfillment = ML armazena o produto → entrega rápida
   if (logistic === "fulfillment") {
     return { label: "≤3 dias", ok: true };
   }
-
-  // Drop-off com bom seller
   if (logistic === "xd_drop_off") {
-    if (powerSeller === "platinum" || powerSeller === "gold") {
-      return { label: "≤5 dias", ok: true };
-    }
-    return { label: "≤7 dias", ok: true };
+    return powerSeller === "platinum" || powerSeller === "gold"
+      ? { label: "≤5 dias", ok: true }
+      : { label: "≤7 dias", ok: true };
   }
-
-  // Cross-docking
   if (logistic === "cross_docking") {
-    if (powerSeller === "platinum" || powerSeller === "gold") {
-      return { label: "≤7 dias", ok: true };
-    }
-    if (powerSeller === "silver") {
-      return { label: "≤12 dias", ok: true };
-    }
-    return { label: "≤12 dias", ok: true };
+    return { label: powerSeller === "silver" ? "≤12 dias" : "≤12 dias", ok: true };
   }
-
-  // Seller sem reputação ou logística desconhecida
   if (!powerSeller) {
     return { label: "⚠️ prazo incerto", ok: false };
   }
-
   return { label: "⚠️ verificar", ok: false };
 }
 
@@ -175,26 +334,19 @@ function calcScore(
   maxPrice: number,
   maxReviews: number
 ): number {
-  // Preço (35%): quanto menor em relação ao max do conjunto, maior a pontuação
   const priceRange = maxPrice - minPrice;
-  const priceScore = priceRange > 0
-    ? 1 - (item.price - minPrice) / priceRange
-    : 1;
+  const priceScore = priceRange > 0 ? 1 - (item.price - minPrice) / priceRange : 1;
 
-  // Rating (25%)
   const rating = item.reviews?.rating_average ?? 0;
   const ratingScore = rating / 5;
 
-  // Nº de avaliações — confiança (15%)
   const reviewsTotal = item.reviews?.total ?? 0;
   const reviewsScore = maxReviews > 0
     ? Math.log10(reviewsTotal + 1) / Math.log10(maxReviews + 1)
     : 0;
 
-  // Frete (15%)
   const shippingScore = item.shipping?.free_shipping ? 1.0 : 0.3;
 
-  // Seller (10%)
   const st = sellerType(item);
   const sellerScore =
     st === "official_store" ? 1.0
@@ -210,7 +362,7 @@ function calcScore(
     shippingScore * 0.15 +
     sellerScore * 0.10;
 
-  return Math.round(total * 100 * 10) / 10; // 0–100, 1 decimal
+  return Math.round(total * 100 * 10) / 10;
 }
 
 // --- Busca na API do ML ---
@@ -218,7 +370,8 @@ function calcScore(
 async function searchML(
   query: string,
   limit: number,
-  maxPriceParam: number | null
+  maxPriceParam: number | null,
+  token: string
 ): Promise<MLSearchResult[]> {
   const params = new URLSearchParams({
     q: query,
@@ -227,11 +380,28 @@ async function searchML(
     ...(maxPriceParam ? { price: `*-${maxPriceParam}` } : {}),
   });
 
-  const url = `https://api.mercadolibre.com/sites/MLB/search?${params}`;
+  const url = `${ML_API}/sites/MLB/search?${params}`;
 
   const resp = await fetch(url, {
-    headers: { "User-Agent": "c3po-family-agent/1.0" },
+    headers: {
+      "User-Agent": "c3po-family-agent/1.0",
+      "Accept": "application/json",
+      "Authorization": `Bearer ${token}`,
+    },
   });
+
+  if (resp.status === 403) {
+    const body = await resp.text().catch(() => "");
+    const isPolicy = body.includes("PA_UNAUTHORIZED") || body.includes("PolicyAgent");
+    throw new Error(
+      isPolicy
+        ? `ML API bloqueada pelo PolicyAgent (403). ` +
+          `O IP do servidor está bloqueado para buscas via API. ` +
+          `Use busca via browser em mercadolivre.com.br como alternativa (ver AGENTS.md §Exec).`
+        : `ML API retornou 403. Token pode ter expirado — tente novamente (o script renova automaticamente). ` +
+          `Se persistir, reexecute --setup para obter novo refresh_token.`
+    );
+  }
 
   if (!resp.ok) {
     throw new Error(`ML API retornou status ${resp.status}: ${await resp.text()}`);
@@ -246,9 +416,52 @@ async function searchML(
 async function main() {
   const opts = parseArgs();
 
+  const appId = process.env.ML_APP_ID;
+  const appSecret = process.env.ML_APP_SECRET;
+
+  if (!appId || !appSecret) {
+    console.error(JSON.stringify({
+      error: "ML_APP_ID e ML_APP_SECRET são obrigatórios.",
+      hint: "Defina as variáveis de ambiente e execute --setup para configurar o token.",
+    }));
+    process.exit(2);
+  }
+
+  // --- Modo setup: trocar code por tokens e salvar cache ---
+  if (opts.mode === "setup") {
+    let cache: TokenCache;
+    try {
+      cache = await exchangeCodeForTokens(appId, appSecret, opts.code, opts.redirectUri);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(JSON.stringify({ error: `Falha no setup do token ML: ${message}` }));
+      process.exit(2);
+    }
+    await writeTokenCache(cache);
+    const expiresInMin = Math.round((cache.expires_at - Date.now()) / 60000);
+    console.log(JSON.stringify({
+      ok: true,
+      message: `Token salvo em ${TOKEN_CACHE_PATH}`,
+      expires_in_minutes: expiresInMin,
+      has_refresh_token: true,
+      note: "O token será renovado automaticamente nas próximas buscas.",
+    }, null, 2));
+    return;
+  }
+
+  // --- Modo busca ---
+  let token: string;
+  try {
+    token = await getValidToken(appId, appSecret);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(JSON.stringify({ error: `Falha ao obter token ML: ${message}` }));
+    process.exit(2);
+  }
+
   let items: MLSearchResult[];
   try {
-    items = await searchML(opts.query, opts.limit, opts.maxPrice);
+    items = await searchML(opts.query, opts.limit, opts.maxPrice, token);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(JSON.stringify({ error: `Falha ao consultar ML API: ${message}` }));
@@ -260,41 +473,32 @@ async function main() {
     return;
   }
 
-  // Filtrar por prazo de entrega (descartar prazo incerto se não for seller qualificado)
   const withDelivery = items.map((item) => ({
     item,
     delivery: estimateDelivery(item),
   }));
 
   const deliveryOk = withDelivery.filter((x) => x.delivery.ok);
-
-  // Se filtrar demais, relaxar e incluir "⚠️ prazo incerto" também
   const pool = deliveryOk.length >= 3 ? deliveryOk : withDelivery;
 
-  // Filtrar por frete grátis (se solicitado)
   const afterShipping = opts.freeShipping
     ? pool.filter((x) => x.item.shipping?.free_shipping)
     : pool;
 
-  // Filtrar por Loja Oficial (se solicitado)
   const afterOfficialStore = opts.officialStore
     ? afterShipping.filter((x) => x.item.official_store_id)
     : afterShipping;
 
-  // Filtrar por rating mínimo (relaxar se necessário)
   let afterRating = afterOfficialStore.filter(
     (x) => (x.item.reviews?.rating_average ?? 0) >= opts.minRating
   );
   if (afterRating.length < 3) {
-    // Relaxar para 3.5
     afterRating = afterOfficialStore.filter(
       (x) => (x.item.reviews?.rating_average ?? 0) >= 3.5
     );
   }
-  // Se ainda não houver resultados suficientes, usar tudo
   const finalPool = afterRating.length > 0 ? afterRating : afterOfficialStore;
 
-  // Calcular score
   const prices = finalPool.map((x) => x.item.price);
   const minPrice = Math.min(...prices);
   const maxPriceCalc = Math.max(...prices);
