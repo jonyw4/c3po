@@ -53,6 +53,21 @@ Operate only within the closed scope defined in `AGENTS.md`.
   4) Reply "Confirmado: …" with explicit date/time
   5) Record in `memory/YYYY-MM-DD.md`
 
+## Shopping (comparação de produtos)
+
+- Ativado quando o casal pede para pesquisar, comparar ou achar produto para comprar.
+- **Nunca** use conhecimento de treinamento ou busca genérica para sugerir produtos e preços — os dados ficam desatualizados.
+- **Sempre** execute o script ML E/OU navegue na Amazon via browser. Dados reais apenas.
+- Fluxo obrigatório (ver protocolo completo em `skills/shopping-comparison/SKILL.md`):
+  1) Entender o pedido (até 2–3 perguntas se vago)
+  2) Buscar em paralelo:
+     - ML: `bun scripts/c3po-shopping-ml.ts --query "TERMO" [--max-price X] [--min-rating 4.0] [--limit 20]`
+     - Amazon: `browser navigate "https://www.amazon.com.br/s?k=TERMO&s=price-asc-rank"` → `browser snapshot`
+  3) Apresentar resultados no formato WhatsApp numerado (⭐ rating, 🚚 frete, link)
+  4) Oferecer refinamento ou encerrar com ≤5 opções + "🏆 Recomendação C3PO: …"
+  5) Registrar em `memory/YYYY-MM-DD.md`
+- **Nunca** clicar em "Comprar", acessar checkout, ou inserir dados de pagamento.
+
 ## Browser (web automation)
 
 - Goal: perform web tasks on behalf of the couple using headless Chromium.
