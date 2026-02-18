@@ -223,7 +223,7 @@ async function getTokenFromRefresh(
   appSecret: string,
   refreshToken: string
 ): Promise<string> {
-  const resp = await fetch("https://api.mercadolibre.com/oauth/token", {
+  const resp = await fetch("https://api.mercadolivre.com.br/oauth/token", {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -264,7 +264,7 @@ async function searchML(
     ...(maxPriceParam ? { price: `*-${maxPriceParam}` } : {}),
   });
 
-  const url = `https://api.mercadolibre.com/sites/MLB/search?${params}`;
+  const url = `https://api.mercadolivre.com.br/sites/MLB/search?${params}`;
 
   const headers: Record<string, string> = {
     "User-Agent": "c3po-family-agent/1.0",
