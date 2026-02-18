@@ -2,10 +2,18 @@
 /**
  * c3po-shopping-ml.ts — Busca e ranqueia produtos no Mercado Livre (Brasil).
  *
- * Usa a API do Mercado Livre (site MLB) com autenticação OAuth (refresh_token).
- * Variáveis de ambiente necessárias: ML_APP_ID, ML_APP_SECRET, ML_REFRESH_TOKEN.
- * Para gerar o refresh_token: faça o OAuth flow no seu navegador local e
- * troque o code por tokens via /oauth/token (grant_type=authorization_code).
+ * Usa a API do Mercado Livre (site MLB) com autenticação OAuth (usuário).
+ *
+ * Modos de autenticação (ordem de preferência):
+ *   1. ML_ACCESS_TOKEN — token de acesso direto (dura ~6h). Obtido via:
+ *      curl -X POST https://api.mercadolibre.com/oauth/token \
+ *        -d "grant_type=authorization_code&client_id=APP_ID&client_secret=SECRET \
+ *            &code=TG-xxx&redirect_uri=https://SUA_URI"
+ *   2. ML_APP_ID + ML_APP_SECRET + ML_REFRESH_TOKEN — renova automaticamente.
+ *
+ * NOTA: A API de busca do ML bloqueia IPs de servidor (PolicyAgent 403).
+ * Se o script retornar erro de PolicyAgent, use busca via browser em
+ * mercadolivre.com.br como alternativa (ver AGENTS.md §Shopping).
  *
  * Uso básico:
  *   bun scripts/c3po-shopping-ml.ts --query "liquidificador mondial"
@@ -216,14 +224,17 @@ function calcScore(
   return Math.round(total * 100 * 10) / 10; // 0–100, 1 decimal
 }
 
-// --- Autenticação ML (refresh_token → access_token) ---
+// --- Autenticação ML ---
+// Suporta dois modos:
+//   1. ML_ACCESS_TOKEN: usa token de acesso direto (sem refresh, expira em ~6h)
+//   2. ML_REFRESH_TOKEN: troca por access_token via OAuth refresh flow
 
 async function getTokenFromRefresh(
   appId: string,
   appSecret: string,
   refreshToken: string
 ): Promise<string> {
-  const resp = await fetch("https://api.mercadolivre.com.br/oauth/token", {
+  const resp = await fetch("https://api.mercadolibre.com/oauth/token", {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -241,7 +252,7 @@ async function getTokenFromRefresh(
     const body = await resp.text();
     throw new Error(
       `Falha ao renovar token ML via refresh_token (${resp.status}): ${body}. ` +
-      `Gere um novo refresh_token via OAuth e atualize ML_REFRESH_TOKEN no ambiente.`
+      `Gere um novo access_token via OAuth e atualize ML_ACCESS_TOKEN no ambiente.`
     );
   }
 
@@ -264,7 +275,7 @@ async function searchML(
     ...(maxPriceParam ? { price: `*-${maxPriceParam}` } : {}),
   });
 
-  const url = `https://api.mercadolivre.com.br/sites/MLB/search?${params}`;
+  const url = `https://api.mercadolibre.com/sites/MLB/search?${params}`;
 
   const headers: Record<string, string> = {
     "User-Agent": "c3po-family-agent/1.0",
@@ -275,9 +286,15 @@ async function searchML(
   const resp = await fetch(url, { headers });
 
   if (resp.status === 403) {
+    const body = await resp.text().catch(() => "");
+    const isPolicy = body.includes("PA_UNAUTHORIZED");
     throw new Error(
-      `ML API bloqueou a requisição (403). Token inválido, expirado ou refresh_token revogado. ` +
-      `Refaça o OAuth e atualize ML_REFRESH_TOKEN no ambiente.`
+      isPolicy
+        ? `ML API bloqueada pelo PolicyAgent (403). ` +
+          `O IP do servidor está bloqueado para buscas via API. ` +
+          `Use busca via browser em mercadolivre.com.br como alternativa.`
+        : `ML API bloqueou a requisição (403). Token inválido ou expirado. ` +
+          `Gere um novo access_token via OAuth e atualize ML_ACCESS_TOKEN no ambiente.`
     );
   }
 
@@ -294,26 +311,36 @@ async function searchML(
 async function main() {
   const opts = parseArgs();
 
-  // ML bloqueia IPs de servidor sem token de usuário — refresh_token obrigatório
+  // ML bloqueia IPs de servidor sem token de usuário OAuth.
+  // Suporta dois modos:
+  //   1. ML_ACCESS_TOKEN: token de acesso direto (obtido via authorization_code flow, expira em ~6h)
+  //   2. ML_APP_ID + ML_APP_SECRET + ML_REFRESH_TOKEN: refresh flow automático
+  const accessToken = process.env.ML_ACCESS_TOKEN;
   const appId = process.env.ML_APP_ID;
   const appSecret = process.env.ML_APP_SECRET;
   const refreshToken = process.env.ML_REFRESH_TOKEN;
 
-  if (!appId || !appSecret || !refreshToken) {
+  if (!accessToken && (!appId || !appSecret || !refreshToken)) {
     console.error(JSON.stringify({
-      error: "ML_APP_ID, ML_APP_SECRET e ML_REFRESH_TOKEN são obrigatórios.",
-      hint: "Gere um refresh_token via OAuth: https://developers.mercadolivre.com.br/pt_br/autenticacao-e-autorizacao",
+      error: "Variáveis de ambiente insuficientes para autenticação ML.",
+      hint: "Defina ML_ACCESS_TOKEN (token direto) OU ML_APP_ID + ML_APP_SECRET + ML_REFRESH_TOKEN.",
+      oauth_guide: "https://developers.mercadolivre.com.br/pt_br/autenticacao-e-autorizacao",
     }));
     process.exit(2);
   }
 
   let token: string;
-  try {
-    token = await getTokenFromRefresh(appId, appSecret, refreshToken);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(JSON.stringify({ error: `Falha ao obter token ML: ${message}` }));
-    process.exit(2);
+  if (accessToken) {
+    // Modo direto: usa o access_token sem renovar
+    token = accessToken;
+  } else {
+    try {
+      token = await getTokenFromRefresh(appId!, appSecret!, refreshToken!);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(JSON.stringify({ error: `Falha ao obter token ML: ${message}` }));
+      process.exit(2);
+    }
   }
 
   let items: MLSearchResult[];

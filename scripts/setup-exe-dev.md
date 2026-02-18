@@ -93,24 +93,49 @@ source ~/.bashrc
 
 ## 5.1) Configure Mercado Livre API credentials
 
-The shopping skill uses the ML API server-side, which requires app credentials (the public API blocks server IPs with 403).
+The shopping skill calls the ML search API server-side. **ML blocks server IPs without an OAuth user token** — a simple App ID + Secret is not enough.
 
-### Get credentials (one-time setup)
+### Create the ML app (one-time)
 
 1. Go to https://developers.mercadolivre.com.br/
-2. Log in with your ML account → **Minhas Aplicações** → **Criar aplicação**
+2. Log in → **Minhas Aplicações** → **Criar aplicação**
 3. Fill in:
    - **Nome**: `c3po-shopping`
-   - **Descrição**: pesquisa de produtos
-   - **URI de redirect**: `https://localhost` (não usado, mas obrigatório)
-   - **Scopes**: nenhum necessário (apenas leitura pública)
+   - **URI de redirect**: any HTTPS URI you control (e.g. `https://mercadolivre.c`)
+   - **Scopes**: `read` (leitura pública)
 4. Save → copy **App ID** and **Secret Key**
+
+### Get OAuth user token (authorization_code flow)
+
+The search API requires a user-level token. Steps to get it:
+
+```bash
+# Step 1 — Open this URL in your browser (replace values):
+# https://auth.mercadolivre.com.br/authorization?response_type=code
+#   &client_id=YOUR_APP_ID&redirect_uri=https://YOUR_REDIRECT_URI
+
+# You'll be redirected to https://YOUR_REDIRECT_URI?code=TG-xxxx-USER_ID
+# Copy the "code" value (starts with TG-)
+
+# Step 2 — Exchange code for token:
+CODE="TG-xxxxx-xxxxxx"
+curl -X POST "https://api.mercadolibre.com/oauth/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=authorization_code&client_id=$ML_APP_ID&client_secret=$ML_APP_SECRET\
+&code=$CODE&redirect_uri=https://YOUR_REDIRECT_URI"
+
+# Copy the "access_token" from the response (starts with APP_USR-)
+```
 
 ### Set on the VM
 
 ```bash
+# Required (app identity)
 echo 'export ML_APP_ID="YOUR_APP_ID"' >> ~/.bashrc
 echo 'export ML_APP_SECRET="YOUR_SECRET_KEY"' >> ~/.bashrc
+
+# Required (user OAuth token — renew every ~6h or when the script reports 403)
+echo 'export ML_ACCESS_TOKEN="APP_USR-xxxx"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
@@ -121,7 +146,11 @@ bun ~/nunes-celio-c3po/scripts/c3po-shopping-ml.ts \
   --query "liquidificador" --max-price 150 --limit 3
 ```
 
-Should return JSON with `results` array. If `"error"` field appears, recheck the credentials.
+Should return JSON with `results` array.
+
+### If the API still returns PolicyAgent 403
+
+The server IP may be blocked by ML. In that case C3PO falls back to browser-based ML search automatically (see AGENTS.md §Exec). No code changes needed — the agent handles the fallback.
 
 ## 6) Run the automated setup
 
@@ -221,7 +250,8 @@ Verify:
 - [ ] `systemctl --user list-timers` shows archive, watchdog, and workspace-backup
 - [ ] `openclaw browser start && openclaw browser open https://example.com && openclaw browser snapshot` works
 - [ ] (if calendar configured) "c3po, marca jantar sexta 20h" works
-- [ ] `bun scripts/c3po-shopping-ml.ts --query "liquidificador" --limit 3` returns JSON with results (not an error)
+- [ ] `ML_ACCESS_TOKEN` is set (obtained via ML OAuth authorization_code flow)
+- [ ] `bun scripts/c3po-shopping-ml.ts --query "liquidificador" --limit 3` returns JSON with results; if PolicyAgent 403, confirm browser fallback is working
 
 ## Maintenance
 

@@ -64,6 +64,12 @@ You CANNOT:
   - Basic search: `bun scripts/c3po-shopping-ml.ts --query "TERMO"`
   - With filters: `bun scripts/c3po-shopping-ml.ts --query "TERMO" [--max-price VALOR] [--min-rating 4.0] [--free-shipping] [--official-store] [--limit 20]`
   - Output: JSON with `results[]` ranked by score (price, rating, shipping, seller quality).
+  - **Auth**: requires `ML_ACCESS_TOKEN` (preferred, expires ~6h) OR `ML_APP_ID` + `ML_APP_SECRET` + `ML_REFRESH_TOKEN`.
+  - **If the script returns a PolicyAgent 403 error** (server IP blocked by ML): fall back to browser-based ML search:
+    1. `browser navigate "https://www.mercadolivre.com.br/busca?as_word=TERMO&sort=price_asc"`
+    2. `browser snapshot` — extract titles, prices, ratings, shipping info and links
+    3. Apply the same filters as the script (price, rating, seller quality, delivery)
+    4. Inform the couple that results came via browser (ML API temporarily unavailable)
 - If no wrapper is available, explain the blocker and do not attempt dangerous alternatives.
 
 ## WhatsApp formatting
