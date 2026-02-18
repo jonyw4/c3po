@@ -27,6 +27,9 @@
         },
         {
           "pattern": "/ABSOLUTE/PATH/TO/THIS/REPO/scripts/workspace-backup.ts"
+        },
+        {
+          "pattern": "/ABSOLUTE/PATH/TO/THIS/REPO/scripts/c3po-shopping-ml.ts"
         }
       ]
     }
