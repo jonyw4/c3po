@@ -2,7 +2,10 @@
 /**
  * c3po-shopping-ml.ts — Busca e ranqueia produtos no Mercado Livre (Brasil).
  *
- * Usa a API pública do Mercado Livre (site MLB) — sem autenticação necessária.
+ * Usa a API do Mercado Livre (site MLB) com autenticação OAuth (refresh_token).
+ * Variáveis de ambiente necessárias: ML_APP_ID, ML_APP_SECRET, ML_REFRESH_TOKEN.
+ * Para gerar o refresh_token: faça o OAuth flow no seu navegador local e
+ * troque o code por tokens via /oauth/token (grant_type=authorization_code).
  *
  * Uso básico:
  *   bun scripts/c3po-shopping-ml.ts --query "liquidificador mondial"
@@ -213,9 +216,13 @@ function calcScore(
   return Math.round(total * 100 * 10) / 10; // 0–100, 1 decimal
 }
 
-// --- Autenticação ML (client credentials) ---
+// --- Autenticação ML (refresh_token → access_token) ---
 
-async function getAppToken(appId: string, appSecret: string): Promise<string> {
+async function getTokenFromRefresh(
+  appId: string,
+  appSecret: string,
+  refreshToken: string
+): Promise<string> {
   const resp = await fetch("https://api.mercadolibre.com/oauth/token", {
     method: "POST",
     headers: {
@@ -223,14 +230,19 @@ async function getAppToken(appId: string, appSecret: string): Promise<string> {
       "Accept": "application/json",
     },
     body: new URLSearchParams({
-      grant_type: "client_credentials",
+      grant_type: "refresh_token",
       client_id: appId,
       client_secret: appSecret,
+      refresh_token: refreshToken,
     }),
   });
 
   if (!resp.ok) {
-    throw new Error(`Falha ao obter token ML: ${resp.status} ${await resp.text()}`);
+    const body = await resp.text();
+    throw new Error(
+      `Falha ao renovar token ML via refresh_token (${resp.status}): ${body}. ` +
+      `Gere um novo refresh_token via OAuth e atualize ML_REFRESH_TOKEN no ambiente.`
+    );
   }
 
   const data = await resp.json() as { access_token: string };
@@ -243,7 +255,7 @@ async function searchML(
   query: string,
   limit: number,
   maxPriceParam: number | null,
-  token?: string
+  token: string
 ): Promise<MLSearchResult[]> {
   const params = new URLSearchParams({
     q: query,
@@ -257,18 +269,16 @@ async function searchML(
   const headers: Record<string, string> = {
     "User-Agent": "c3po-family-agent/1.0",
     "Accept": "application/json",
+    "Authorization": `Bearer ${token}`,
   };
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
 
   const resp = await fetch(url, { headers });
 
   if (resp.status === 403) {
-    const hint = token
-      ? "Token inválido ou expirado."
-      : "Configure ML_APP_ID e ML_APP_SECRET no ambiente para autenticação.";
-    throw new Error(`ML API bloqueou a requisição (403). ${hint}`);
+    throw new Error(
+      `ML API bloqueou a requisição (403). Token inválido, expirado ou refresh_token revogado. ` +
+      `Refaça o OAuth e atualize ML_REFRESH_TOKEN no ambiente.`
+    );
   }
 
   if (!resp.ok) {
@@ -284,17 +294,22 @@ async function searchML(
 async function main() {
   const opts = parseArgs();
 
-  // ML bloqueia IPs de servidor sem autenticação — token obrigatório
+  // ML bloqueia IPs de servidor sem token de usuário — refresh_token obrigatório
   const appId = process.env.ML_APP_ID;
   const appSecret = process.env.ML_APP_SECRET;
-  if (!appId || !appSecret) {
-    console.error(JSON.stringify({ error: "ML_APP_ID e ML_APP_SECRET são obrigatórios. Configure no ambiente." }));
+  const refreshToken = process.env.ML_REFRESH_TOKEN;
+
+  if (!appId || !appSecret || !refreshToken) {
+    console.error(JSON.stringify({
+      error: "ML_APP_ID, ML_APP_SECRET e ML_REFRESH_TOKEN são obrigatórios.",
+      hint: "Gere um refresh_token via OAuth: https://developers.mercadolivre.com.br/pt_br/autenticacao-e-autorizacao",
+    }));
     process.exit(2);
   }
 
   let token: string;
   try {
-    token = await getAppToken(appId, appSecret);
+    token = await getTokenFromRefresh(appId, appSecret, refreshToken);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(JSON.stringify({ error: `Falha ao obter token ML: ${message}` }));
