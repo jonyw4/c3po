@@ -120,6 +120,7 @@ Then re-render and re-copy:
 ```bash
 bun scripts/render-files.ts
 cp openclaw/openclaw.json5.local ~/.openclaw/openclaw.json
+cp openclaw/exec-approvals.local.json ~/.openclaw/exec-approvals.json
 ```
 
 ## 9) Start the Gateway
@@ -195,7 +196,11 @@ Verify:
 
 ```bash
 cd ~/nunes-celio-c3po && git pull
-# OpenClaw hot-reloads workspace files automatically
+bun scripts/render-files.ts
+cp openclaw/openclaw.json5.local ~/.openclaw/openclaw.json
+cp openclaw/exec-approvals.local.json ~/.openclaw/exec-approvals.json
+# OpenClaw hot-reloads workspace files automatically; exec-approvals requires restart
+systemctl --user restart c3po-gateway
 ```
 
 ### Reconnect WhatsApp (if session expires)
