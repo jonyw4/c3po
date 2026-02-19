@@ -65,7 +65,10 @@ You CANNOT:
   - ML only: `bun scripts/c3po-shopping-browser.ts --query "TERMO" --source ml`
   - Amazon only: `bun scripts/c3po-shopping-browser.ts --query "TERMO" --source amazon`
   - Output: JSON with `results[]` ranked by score (price, rating, shipping, seller quality). Each result has a `source` field ("ml" or "amazon").
-  - No auth required — uses headless Chromium (Playwright) to scrape search pages directly.
+  - **How it works (priority order):**
+    1. **ML**: calls the free official Mercado Livre API (`api.mercadolibre.com/sites/MLB/search`) — no auth, no bot detection.
+    2. **Amazon**: calls [Real-Time Amazon Data](https://rapidapi.com/letscrape-6bRBa3QguO5/api/real-time-amazon-data) via RapidAPI if `RAPIDAPI_KEY` is set in the environment. Falls back to browser if the key is absent.
+    3. **Browser fallback**: headless Chromium (Playwright) is launched only for sources where the API did not return results.
   - **If the script fails with CAPTCHA/bloqueio error**: fall back to the OpenClaw browser tool:
     1. `browser navigate "https://www.mercadolivre.com.br/busca?as_word=TERMO&sort=price_asc"`
     2. `browser snapshot` — extract titles, prices, ratings, shipping info and links

@@ -92,19 +92,23 @@ else
     echo "Dependencies already installed."
 fi
 
-# --- 5. Install Playwright + Chromium (for browser automation) ---
-echo "--- [5/10] Installing Playwright and Chromium..."
+# --- 5. Install Playwright Chromium (for browser automation) ---
+echo "--- [5/10] Installing Playwright Chromium..."
 
-if npx playwright --version >/dev/null 2>&1; then
-    echo "Playwright already installed."
+# Playwright is installed locally via bun install (package.json dependency).
+# Step A: download only the Chromium headless shell binary (no Firefox/WebKit).
+cd "$REPO_DIR"
+bunx playwright install chromium
+echo "Chromium binary downloaded."
+
+# Step B: install system library dependencies (libnss, libatk, libglib, etc.).
+# playwright install-deps uses apt-get and requires root.
+if sudo bunx playwright install-deps chromium; then
+    echo "Chromium system dependencies installed."
 else
-    npm install -g playwright
-    echo "Playwright installed."
+    echo "WARNING: Could not install Chromium system deps (non-fatal if already present)."
+    echo "  Run manually if needed: sudo npx playwright install-deps chromium"
 fi
-
-# Install Chromium browser binary (needed for headless automation).
-npx playwright install --with-deps chromium 2>/dev/null || npx playwright install chromium
-echo "Chromium browser installed for Playwright."
 
 # --- 6. Set timezone ---
 echo "--- [6/10] Setting timezone to America/Sao_Paulo..."

@@ -61,7 +61,10 @@ bun scripts/c3po-shopping-browser.ts \
 
 O script retorna JSON com produtos de ML e Amazon já unificados e ranqueados por score. Cada item tem um campo `source` ("ml" ou "amazon"). Use os resultados diretamente — não é necessário fazer buscas separadas.
 
-> **Como funciona:** usa Playwright headless (Chromium) para raspar os sites de busca do ML e da Amazon diretamente, sem depender de API nem de autenticação.
+> **Como funciona (em ordem de prioridade):**
+> 1. **ML:** chama a API oficial gratuita do Mercado Livre (`api.mercadolibre.com/sites/MLB/search`) — sem chave, sem bloqueio.
+> 2. **Amazon:** chama a [Real-Time Amazon Data API](https://rapidapi.com/letscrape-6bRBa3QguO5/api/real-time-amazon-data) via RapidAPI se `RAPIDAPI_KEY` estiver configurado no ambiente. Sem a chave, cai no browser.
+> 3. **Browser (Playwright/Chromium):** fallback automático para qualquer fonte onde a API falhou ou não há chave.
 >
 > **Flags de fonte única:** `--source ml` (só ML) ou `--source amazon` (só Amazon) — útil quando o casal pede para descartar uma das fontes.
 >
