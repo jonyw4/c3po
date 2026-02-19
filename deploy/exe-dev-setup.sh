@@ -96,14 +96,18 @@ fi
 echo "--- [5/10] Installing Playwright Chromium..."
 
 # Playwright is installed locally via bun install (package.json dependency).
-# We only need to install the Chromium browser binary.
-# --with-deps also installs system libs (libnss, libatk, etc.) — requires sudo.
+# Step A: download only the Chromium headless shell binary (no Firefox/WebKit).
 cd "$REPO_DIR"
-if bunx playwright install --with-deps chromium 2>/dev/null; then
-    echo "Chromium browser installed for Playwright (with system deps)."
+bunx playwright install chromium
+echo "Chromium binary downloaded."
+
+# Step B: install system library dependencies (libnss, libatk, libglib, etc.).
+# playwright install-deps uses apt-get and requires root.
+if sudo bunx playwright install-deps chromium; then
+    echo "Chromium system dependencies installed."
 else
-    bunx playwright install chromium
-    echo "Chromium browser installed for Playwright."
+    echo "WARNING: Could not install Chromium system deps (non-fatal if already present)."
+    echo "  Run manually if needed: sudo npx playwright install-deps chromium"
 fi
 
 # --- 6. Set timezone ---
