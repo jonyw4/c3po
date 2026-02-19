@@ -480,169 +480,335 @@ async function searchAmazon(
     .slice(0, limit);
 }
 
+// ─── ML via API oficial (gratuita, sem auth) ──────────────────────────────────
+
+interface MLApiItem {
+  title: string;
+  price: number;
+  condition: string;
+  permalink: string;
+  shipping: { free_shipping: boolean };
+  official_store_id: number | null;
+  seller: { id: number; nickname: string };
+}
+
+async function searchMLViaApi(
+  query: string,
+  limit: number,
+  maxPrice: number | null
+): Promise<RawProduct[]> {
+  const params = new URLSearchParams({
+    q: query,
+    sort: "price_asc",
+    limit: String(Math.min(limit * 3, 50)),
+  });
+  if (maxPrice !== null) params.set("price_to", String(maxPrice));
+
+  const res = await fetch(
+    `https://api.mercadolibre.com/sites/MLB/search?${params}`,
+    {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(15_000),
+    }
+  );
+  if (!res.ok) throw new Error(`ML API HTTP ${res.status}`);
+
+  const data = (await res.json()) as { results: MLApiItem[] };
+  return (data.results ?? [])
+    .filter((r) => r.price > 0 && r.title)
+    .map(
+      (r): RawProduct => ({
+        source: "ml",
+        title: r.title,
+        price: r.price,
+        rating: null, // não disponível no endpoint público de busca
+        reviews_total: null,
+        free_shipping: r.shipping?.free_shipping ?? false,
+        seller_name: r.seller?.nickname ?? "Vendedor ML",
+        seller_type: r.official_store_id ? "official_store" : "regular",
+        permalink: r.permalink,
+        condition: r.condition === "used" ? "used" : "new",
+      })
+    )
+    .slice(0, limit);
+}
+
+// ─── Amazon via Real-Time Amazon Data (RapidAPI – letscrape) ─────────────────
+
+interface AmazonApiProduct {
+  product_title: string;
+  product_price: string;
+  product_star_rating: string;
+  product_num_ratings: number;
+  product_url: string;
+  delivery: string;
+  is_prime: boolean;
+}
+
+async function searchAmazonViaApi(
+  query: string,
+  limit: number,
+  rapidApiKey: string,
+  maxPrice: number | null,
+  minRating: number
+): Promise<RawProduct[]> {
+  const params = new URLSearchParams({
+    query,
+    country: "BR",
+    sort_by: "LOWEST_PRICE",
+    page: "1",
+  });
+  if (maxPrice !== null) params.set("max_price", String(maxPrice));
+  if (minRating > 0) params.set("min_rating", String(minRating));
+
+  const res = await fetch(
+    `https://real-time-amazon-data.p.rapidapi.com/search?${params}`,
+    {
+      headers: {
+        "X-RapidAPI-Key": rapidApiKey,
+        "X-RapidAPI-Host": "real-time-amazon-data.p.rapidapi.com",
+      },
+      signal: AbortSignal.timeout(15_000),
+    }
+  );
+  if (!res.ok) throw new Error(`Amazon API HTTP ${res.status}`);
+
+  const data = (await res.json()) as {
+    data: { products: AmazonApiProduct[] };
+  };
+  const products = data.data?.products ?? [];
+
+  return products
+    .filter((p) => p.product_title && p.product_price)
+    .map((p): RawProduct | null => {
+      const price = parsePrice(p.product_price);
+      if (!price) return null;
+
+      const deliveryLc = (p.delivery ?? "").toLowerCase();
+      const free_shipping =
+        p.is_prime ||
+        deliveryLc.includes("grátis") ||
+        deliveryLc.includes("gratis") ||
+        deliveryLc.includes("free");
+
+      return {
+        source: "amazon",
+        title: p.product_title,
+        price,
+        rating: p.product_star_rating ? parseFloat(p.product_star_rating) : null,
+        reviews_total: p.product_num_ratings || null,
+        free_shipping,
+        seller_name: p.is_prime ? "Amazon.com.br" : "Vendedor Amazon",
+        seller_type: "regular",
+        permalink: p.product_url,
+        condition: "new",
+      };
+    })
+    .filter((p): p is RawProduct => p !== null)
+    .slice(0, limit);
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
   const opts = parseArgs();
+  const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY ?? "";
+
+  const raw: RawProduct[] = [];
+  const warnings: { source: string; error: string }[] = [];
+
+  // ─── Fase 1: API (rápida, sem browser) ──────────────────────────────────────
+
+  if (opts.source === "ml" || opts.source === "both") {
+    try {
+      const results = await searchMLViaApi(opts.query, opts.limit, opts.maxPrice);
+      raw.push(...results);
+    } catch (err: unknown) {
+      warnings.push({ source: "ml-api", error: String(err) });
+    }
+  }
+
+  if (opts.source === "amazon" || opts.source === "both") {
+    if (RAPIDAPI_KEY) {
+      try {
+        const results = await searchAmazonViaApi(
+          opts.query,
+          opts.limit,
+          RAPIDAPI_KEY,
+          opts.maxPrice,
+          opts.minRating
+        );
+        raw.push(...results);
+      } catch (err: unknown) {
+        warnings.push({ source: "amazon-api", error: String(err) });
+      }
+    }
+  }
+
+  // ─── Fase 2: Browser (fallback — só para fontes sem resultados via API) ──────
+
+  const needsBrowserML =
+    (opts.source === "ml" || opts.source === "both") &&
+    !raw.some((r) => r.source === "ml");
+  const needsBrowserAmazon =
+    (opts.source === "amazon" || opts.source === "both") &&
+    !RAPIDAPI_KEY &&
+    !raw.some((r) => r.source === "amazon");
 
   let browser: Browser | null = null;
-
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        // Reduz sinais de automação detectáveis
-        "--disable-blink-features=AutomationControlled",
-      ],
-    });
+    if (needsBrowserML || needsBrowserAmazon) {
+      browser = await chromium.launch({
+        headless: true,
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-blink-features=AutomationControlled",
+        ],
+      });
 
-    const context = await browser.newContext({
-      userAgent: USER_AGENT,
-      locale: "pt-BR",
-      timezoneId: "America/Sao_Paulo",
-      viewport: { width: 1280, height: 800 },
-    });
+      const context = await browser.newContext({
+        userAgent: USER_AGENT,
+        locale: "pt-BR",
+        timezoneId: "America/Sao_Paulo",
+        viewport: { width: 1280, height: 800 },
+      });
 
-    // Esconder sinais de automação antes de qualquer navegação
-    await context.addInitScript(() => {
-      Object.defineProperty(navigator, "webdriver", { get: () => false });
-    });
+      await context.addInitScript(() => {
+        Object.defineProperty(navigator, "webdriver", { get: () => false });
+      });
 
-    // Bloquear recursos pesados desnecessários (imagens, fontes, mídia)
-    await context.route("**/*", (route) => {
-      const type = route.request().resourceType();
-      if (["image", "media", "font"].includes(type)) {
-        route.abort();
-      } else {
-        route.continue();
+      await context.route("**/*", (route) => {
+        const type = route.request().resourceType();
+        if (["image", "media", "font"].includes(type)) {
+          route.abort();
+        } else {
+          route.continue();
+        }
+      });
+
+      if (needsBrowserML) {
+        const page = await context.newPage();
+        try {
+          const results = await searchML(page, opts.query, opts.limit);
+          raw.push(...results);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          warnings.push({ source: "ml", error: msg });
+        } finally {
+          await page.close();
+        }
       }
-    });
 
-    const raw: RawProduct[] = [];
-    const warnings: { source: string; error: string }[] = [];
-
-    // Buscar ML
-    if (opts.source === "ml" || opts.source === "both") {
-      const page = await context.newPage();
-      try {
-        const results = await searchML(page, opts.query, opts.limit);
-        raw.push(...results);
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        warnings.push({ source: "ml", error: msg });
-      } finally {
-        await page.close();
+      if (needsBrowserAmazon) {
+        const page = await context.newPage();
+        try {
+          const results = await searchAmazon(page, opts.query, opts.limit);
+          raw.push(...results);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          warnings.push({ source: "amazon", error: msg });
+        } finally {
+          await page.close();
+        }
       }
+
+      await context.close();
     }
-
-    // Buscar Amazon
-    if (opts.source === "amazon" || opts.source === "both") {
-      const page = await context.newPage();
-      try {
-        const results = await searchAmazon(page, opts.query, opts.limit);
-        raw.push(...results);
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        warnings.push({ source: "amazon", error: msg });
-      } finally {
-        await page.close();
-      }
-    }
-
-    await context.close();
-
-    // Nenhum resultado + todos com erro → falha total
-    if (raw.length === 0 && warnings.length > 0) {
-      const errorMsg = warnings.map((w) => `${w.source}: ${w.error}`).join(" | ");
-      console.error(
-        JSON.stringify({
-          error: `Nenhum resultado obtido via browser. ${errorMsg}`,
-          fallback_hint:
-            "Use o browser tool do OpenClaw diretamente: browser navigate + browser snapshot.",
-        })
-      );
-      process.exit(2);
-    }
-
-    // ─── Filtros ────────────────────────────────────────────────────────────
-    let pool = opts.maxPrice !== null
-      ? raw.filter((p) => p.price <= opts.maxPrice!)
-      : raw;
-
-    if (opts.freeShipping) pool = pool.filter((p) => p.free_shipping);
-    if (opts.officialStore) pool = pool.filter((p) => p.seller_type === "official_store");
-
-    // Rating com fallback progressivo
-    let withRating = pool.filter((p) => (p.rating ?? 0) >= opts.minRating);
-    if (withRating.length < 3) {
-      withRating = pool.filter((p) => (p.rating ?? 0) >= 3.5);
-    }
-    const finalPool = withRating.length > 0 ? withRating : pool;
-
-    if (finalPool.length === 0) {
-      console.log(
-        JSON.stringify({
-          query: opts.query,
-          total: 0,
-          results: [],
-          ...(warnings.length ? { warnings } : {}),
-        })
-      );
-      return;
-    }
-
-    // ─── Ranking ────────────────────────────────────────────────────────────
-    const prices = finalPool.map((p) => p.price);
-    const minPrice = Math.min(...prices);
-    const maxPriceCalc = Math.max(...prices);
-    const maxReviews = Math.max(...finalPool.map((p) => p.reviews_total ?? 0));
-
-    const ranked: RankedProduct[] = finalPool
-      .map((p) => ({
-        rank: 0,
-        source: p.source,
-        title: p.title,
-        price: p.price,
-        currency: "BRL",
-        condition: p.condition,
-        rating: p.rating,
-        reviews_total: p.reviews_total,
-        free_shipping: p.free_shipping,
-        estimated_delivery: estimateDelivery(p),
-        seller_type: p.seller_type,
-        seller_name: p.seller_name,
-        permalink: p.permalink,
-        score: calcScore(p, minPrice, maxPriceCalc, maxReviews),
-      }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, opts.limit)
-      .map((p, i) => ({ ...p, rank: i + 1 }));
-
-    console.log(
-      JSON.stringify(
-        {
-          query: opts.query,
-          total: ranked.length,
-          sources: [...new Set(ranked.map((p) => p.source))],
-          filters_applied: {
-            max_price: opts.maxPrice,
-            min_rating: opts.minRating,
-            free_shipping: opts.freeShipping,
-            official_store: opts.officialStore,
-          },
-          results: ranked,
-          ...(warnings.length ? { warnings } : {}),
-        },
-        null,
-        2
-      )
-    );
   } finally {
     if (browser) await browser.close();
   }
+
+  // ─── Nenhum resultado + todos com erro → falha total ────────────────────────
+
+  if (raw.length === 0 && warnings.length > 0) {
+    const errorMsg = warnings.map((w) => `${w.source}: ${w.error}`).join(" | ");
+    console.error(
+      JSON.stringify({
+        error: `Nenhum resultado obtido. ${errorMsg}`,
+        fallback_hint:
+          "Use o browser tool do OpenClaw diretamente: browser navigate + browser snapshot.",
+      })
+    );
+    process.exit(2);
+  }
+
+  // ─── Filtros ─────────────────────────────────────────────────────────────────
+
+  let pool = opts.maxPrice !== null
+    ? raw.filter((p) => p.price <= opts.maxPrice!)
+    : raw;
+
+  if (opts.freeShipping) pool = pool.filter((p) => p.free_shipping);
+  if (opts.officialStore) pool = pool.filter((p) => p.seller_type === "official_store");
+
+  // Rating com fallback progressivo (ML via API não retorna rating — incluir sem filtrar)
+  let withRating = pool.filter((p) => (p.rating ?? 0) >= opts.minRating);
+  if (withRating.length < 3) {
+    withRating = pool.filter((p) => (p.rating ?? 0) >= 3.5);
+  }
+  const finalPool = withRating.length > 0 ? withRating : pool;
+
+  if (finalPool.length === 0) {
+    console.log(
+      JSON.stringify({
+        query: opts.query,
+        total: 0,
+        results: [],
+        ...(warnings.length ? { warnings } : {}),
+      })
+    );
+    return;
+  }
+
+  // ─── Ranking ─────────────────────────────────────────────────────────────────
+
+  const prices = finalPool.map((p) => p.price);
+  const minPrice = Math.min(...prices);
+  const maxPriceCalc = Math.max(...prices);
+  const maxReviews = Math.max(...finalPool.map((p) => p.reviews_total ?? 0));
+
+  const ranked: RankedProduct[] = finalPool
+    .map((p) => ({
+      rank: 0,
+      source: p.source,
+      title: p.title,
+      price: p.price,
+      currency: "BRL",
+      condition: p.condition,
+      rating: p.rating,
+      reviews_total: p.reviews_total,
+      free_shipping: p.free_shipping,
+      estimated_delivery: estimateDelivery(p),
+      seller_type: p.seller_type,
+      seller_name: p.seller_name,
+      permalink: p.permalink,
+      score: calcScore(p, minPrice, maxPriceCalc, maxReviews),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, opts.limit)
+    .map((p, i) => ({ ...p, rank: i + 1 }));
+
+  console.log(
+    JSON.stringify(
+      {
+        query: opts.query,
+        total: ranked.length,
+        sources: [...new Set(ranked.map((p) => p.source))],
+        filters_applied: {
+          max_price: opts.maxPrice,
+          min_rating: opts.minRating,
+          free_shipping: opts.freeShipping,
+          official_store: opts.officialStore,
+        },
+        results: ranked,
+        ...(warnings.length ? { warnings } : {}),
+      },
+      null,
+      2
+    )
+  );
 }
 
 main().catch((err) => {
