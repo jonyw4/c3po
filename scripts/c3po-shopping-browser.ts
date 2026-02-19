@@ -529,20 +529,27 @@ async function searchMLViaApi(
 
   // Preferir proxy RapidAPI (contorna bloqueio de datacenter)
   if (rapidApiKey) {
-    const res = await fetch(
+    const rapidHeaders = {
+      "X-RapidAPI-Key": rapidApiKey,
+      "X-RapidAPI-Host": "mercado-libre7.p.rapidapi.com",
+      Accept: "application/json",
+    };
+
+    // Tenta o path padrão primeiro; em caso de 404 tenta path alternativo
+    for (const path of [
       `https://mercado-libre7.p.rapidapi.com/sites/MLB/search?${params}`,
-      {
-        headers: {
-          "X-RapidAPI-Key": rapidApiKey,
-          "X-RapidAPI-Host": "mercado-libre7.p.rapidapi.com",
-          Accept: "application/json",
-        },
+      `https://mercado-libre7.p.rapidapi.com/search?site_id=MLB&${params}`,
+    ]) {
+      const res = await fetch(path, {
+        headers: rapidHeaders,
         signal: AbortSignal.timeout(15_000),
-      }
-    );
-    if (!res.ok) throw new Error(`ML RapidAPI HTTP ${res.status}`);
-    const data = (await res.json()) as { results: MLApiItem[] };
-    return mapMLItems(data.results, limit);
+      });
+      if (res.status === 404) continue; // tenta próximo path
+      if (!res.ok) throw new Error(`ML RapidAPI HTTP ${res.status}`);
+      const data = (await res.json()) as { results: MLApiItem[] };
+      return mapMLItems(data.results, limit);
+    }
+    throw new Error("ML RapidAPI: nenhum endpoint respondeu (404)");
   }
 
   // Fallback: API oficial direta (só funciona fora de datacenter)
@@ -631,6 +638,63 @@ async function searchAmazonViaApi(
     })
     .filter((p): p is RawProduct => p !== null)
     .slice(0, limit);
+}
+
+// ─── Filtro de relevância via LLM ────────────────────────────────────────────
+// Remove acessórios, peças e itens não relacionados à busca principal.
+// Requer ANTHROPIC_API_KEY; sem a chave, retorna todos os produtos.
+
+async function filterByRelevance(
+  products: RankedProduct[],
+  query: string,
+  apiKey: string
+): Promise<RankedProduct[]> {
+  if (products.length === 0 || !apiKey) return products;
+
+  const list = products.map((p, i) => `${i}: ${p.title} — R$${p.price}`).join("\n");
+
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 256,
+        messages: [
+          {
+            role: "user",
+            content:
+              `Busca do usuário: "${query}"\n\n` +
+              `Produtos encontrados:\n${list}\n\n` +
+              `Quais desses produtos (pelos índices) SÃO realmente o que o usuário buscou e NÃO são peças, acessórios, tampas, correias, adaptadores, kits de reparo ou itens meramente relacionados? ` +
+              `Responda SOMENTE com um array JSON de índices válidos, sem texto extra. Exemplo: [0, 2, 4]`,
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!res.ok) return products;
+
+    const data = (await res.json()) as {
+      content: Array<{ type: string; text: string }>;
+    };
+    const text = data.content?.[0]?.text ?? "";
+    const match = text.match(/\[[\d,\s]*\]/);
+    if (!match) return products;
+
+    const indexes = (JSON.parse(match[0]) as number[]).filter(
+      (i) => i >= 0 && i < products.length
+    );
+    const filtered = indexes.map((i) => products[i]);
+    return filtered.length > 0 ? filtered : products;
+  } catch {
+    return products; // nunca bloqueia — falha silenciosa
+  }
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -811,22 +875,26 @@ async function main() {
       score: calcScore(p, minPrice, maxPriceCalc, maxReviews),
     }))
     .sort((a, b) => b.score - a.score)
-    .slice(0, opts.limit)
-    .map((p, i) => ({ ...p, rank: i + 1 }));
+    .slice(0, opts.limit);
+
+  // Filtro de relevância via LLM (remove peças/acessórios não relacionados)
+  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "";
+  const relevant = await filterByRelevance(ranked, opts.query, ANTHROPIC_API_KEY);
+  const final = relevant.map((p, i) => ({ ...p, rank: i + 1 }));
 
   console.log(
     JSON.stringify(
       {
         query: opts.query,
-        total: ranked.length,
-        sources: [...new Set(ranked.map((p) => p.source))],
+        total: final.length,
+        sources: [...new Set(final.map((p) => p.source))],
         filters_applied: {
           max_price: opts.maxPrice,
           min_rating: opts.minRating,
           free_shipping: opts.freeShipping,
           official_store: opts.officialStore,
         },
-        results: ranked,
+        results: final,
         ...(warnings.length ? { warnings } : {}),
       },
       null,
