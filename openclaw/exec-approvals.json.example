@@ -30,6 +30,9 @@
         },
         {
           "pattern": "/ABSOLUTE/PATH/TO/THIS/REPO/scripts/c3po-shopping-ml.ts"
+        },
+        {
+          "pattern": "/ABSOLUTE/PATH/TO/THIS/REPO/scripts/c3po-shopping-browser.ts"
         }
       ]
     }

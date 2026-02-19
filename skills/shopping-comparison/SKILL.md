@@ -46,33 +46,29 @@ ENTENDER → BUSCAR → APRESENTAR → REFINAR? → FINALIZAR (≤ 5 opções)
 
 ### 2. BUSCAR
 
-Execute **em paralelo** as duas buscas abaixo.
-
-#### Mercado Livre (via script)
+Execute **uma única chamada** que busca ML e Amazon em paralelo:
 
 ```
-bun scripts/c3po-shopping-ml.ts \
+bun scripts/c3po-shopping-browser.ts \
   --query "TERMO_DE_BUSCA" \
+  --source both \
   [--max-price VALOR] \
   [--min-rating 4.0] \
   [--free-shipping] \
   [--official-store] \
-  [--limit 20]
+  [--limit 10]
 ```
 
-O script retorna JSON com produtos ranqueados por score. Use os resultados diretamente.
+O script retorna JSON com produtos de ML e Amazon já unificados e ranqueados por score. Cada item tem um campo `source` ("ml" ou "amazon"). Use os resultados diretamente — não é necessário fazer buscas separadas.
 
-> **Pré-requisito:** A ML API bloqueia chamadas server-side sem autenticação OAuth de usuário. Defina `ML_ACCESS_TOKEN` (preferido, obtido via authorization_code flow) OU `ML_APP_ID` + `ML_APP_SECRET` + `ML_REFRESH_TOKEN`. Ver `scripts/setup-exe-dev.md` §5.1 e `.env.example`.
+> **Como funciona:** usa Playwright headless (Chromium) para raspar os sites de busca do ML e da Amazon diretamente, sem depender de API nem de autenticação.
 >
-> **Fallback (PolicyAgent 403):** Se o script retornar erro de PolicyAgent (IP do servidor bloqueado), faça a busca via browser em `https://www.mercadolivre.com.br/busca?as_word=TERMO&sort=price_asc` e extraia os resultados por snapshot. Informe o casal que a API ML estava temporariamente indisponível.
-
-#### Amazon Brasil (via browser)
-
-1. `browser navigate "https://www.amazon.com.br/s?k=TERMO_DE_BUSCA&s=price-asc-rank"`
-2. `browser snapshot` — ler a árvore de acessibilidade
-3. Extrair por item: título, preço, rating (estrelas + nº de avaliações), prazo de entrega (se exibido), link
-4. Filtrar: manter apenas itens com prazo ≤ 15 dias visível, ou produtos "Vendido pela Amazon" (prazo confiável)
-5. Se a página pedir CAPTCHA ou não carregar, informar o casal e prosseguir só com ML
+> **Flags de fonte única:** `--source ml` (só ML) ou `--source amazon` (só Amazon) — útil quando o casal pede para descartar uma das fontes.
+>
+> **Fallback (CAPTCHA/bloqueio):** se o script retornar erro de CAPTCHA ou bloqueio, use o browser tool do OpenClaw diretamente:
+> 1. `browser navigate "https://www.mercadolivre.com.br/busca?as_word=TERMO&sort=price_asc"`
+> 2. `browser snapshot` — extrair títulos, preços, ratings, frete e links manualmente
+> 3. Informar o casal que os resultados vieram via browser interativo (raspagem temporariamente bloqueada)
 
 ### 3. APRESENTAR
 
@@ -111,8 +107,8 @@ Responder ao feedback do casal e repetir BUSCAR com parâmetros ajustados:
 | "Só [marca]" | Refinar o termo de busca |
 | "Só com frete grátis" | Adicionar `--free-shipping` |
 | "Só Loja Oficial" | Adicionar `--official-store` |
-| "Descarta a Amazon" | Pular busca Amazon na próxima rodada |
-| "Descarta o ML" | Pular busca ML na próxima rodada |
+| "Descarta a Amazon" | Adicionar `--source ml` na próxima chamada |
+| "Descarta o ML" | Adicionar `--source amazon` na próxima chamada |
 | "Chega, compara os melhores" | Ir para FINALIZAR com os atuais |
 
 Não há limite de rodadas — o casal controla quando parar.
