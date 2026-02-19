@@ -251,29 +251,41 @@ async function searchMLViaApi(
   };
 
   // Tenta paths em ordem de probabilidade para a mercado-libre7 RapidAPI.
-  // Usa params mínimos (q + site_id) para evitar rejeição por params inválidos.
+  // Usa params mínimos para evitar rejeição por params inválidos.
+  // Padrão observado: listing_data usa listing_url (URL completa do ML).
   const q = encodeURIComponent(query);
+  const searchUrl = encodeURIComponent(`https://www.mercadolivre.com.br/search?q=${query}`);
   const extraPrice = params.get("price_to") ? `&price_to=${params.get("price_to")}` : "";
   const mlPaths = [
+    // Path mais provável baseado nos nomes dos outros endpoints da API
+    `https://mercado-libre7.p.rapidapi.com/listings_from_search?query=${q}&site_id=MLB${extraPrice}`,
     `https://mercado-libre7.p.rapidapi.com/listings_from_search?q=${q}&site_id=MLB${extraPrice}`,
-    `https://mercado-libre7.p.rapidapi.com/search_listings?q=${q}&site_id=MLB${extraPrice}`,
+    // Variante com URL completa de busca (similar ao listing_data que usa listing_url)
+    `https://mercado-libre7.p.rapidapi.com/listings_from_search?search_url=${searchUrl}`,
+    // Outros paths alternativos
+    `https://mercado-libre7.p.rapidapi.com/search_listings?query=${q}&site_id=MLB${extraPrice}`,
+    `https://mercado-libre7.p.rapidapi.com/search?query=${q}&site_id=MLB${extraPrice}`,
     `https://mercado-libre7.p.rapidapi.com/search?q=${q}&site_id=MLB${extraPrice}`,
-    `https://mercado-libre7.p.rapidapi.com/search?q=${q}&country=BR${extraPrice}`,
-    `https://mercado-libre7.p.rapidapi.com/sites/MLB/search?q=${q}${extraPrice}`,
   ];
 
   const tried404: string[] = [];
+  let first404Body = "";
   for (const path of mlPaths) {
     const res = await fetch(path, {
       headers: rapidHeaders,
       signal: AbortSignal.timeout(15_000),
     });
-    if (res.status === 404) { tried404.push(path); continue; }
+    if (res.status === 404) {
+      if (!first404Body) first404Body = await res.text().catch(() => "");
+      tried404.push(path.split("?")[0]);
+      continue;
+    }
     if (!res.ok) throw new Error(`ML RapidAPI HTTP ${res.status} em ${path}`);
     const data = (await res.json()) as { results: MLApiItem[] };
     return mapMLItems(data.results, limit);
   }
-  throw new Error(`ML RapidAPI: todos os paths retornaram 404. Paths tentados: ${tried404.map(p => p.split("?")[0]).join(", ")}`);
+  const bodyHint = first404Body ? ` | corpo: ${first404Body.slice(0, 200)}` : "";
+  throw new Error(`ML RapidAPI: todos os paths retornaram 404. Tentados: ${tried404.join(", ")}${bodyHint}`);
 }
 
 // ─── Amazon via Real-Time Amazon Data (RapidAPI – letscrape) ─────────────────
