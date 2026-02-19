@@ -206,7 +206,7 @@ async function searchML(
 ): Promise<RawProduct[]> {
   const url = `https://www.mercadolivre.com.br/busca?as_word=${encodeURIComponent(query)}&sort=price_asc`;
 
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+  await page.goto(url, { waitUntil: "load", timeout: 30_000 });
 
   // Detectar bloqueio / CAPTCHA
   const isCaptcha = await page
@@ -224,9 +224,12 @@ async function searchML(
     );
   }
 
-  // Aguardar resultados renderizarem (ML usa React/SSR)
+  // Aguardar resultados renderizarem (ML usa React/SSR) — selectors cobrem UI clássica e poly-ui
   await page
-    .waitForSelector("li.ui-search-layout__item, .poly-card", { timeout: 15_000 })
+    .waitForSelector(
+      "li.ui-search-layout__item, .poly-card, .ui-search-results li, [class*='ui-search-layout__item']",
+      { timeout: 20_000 }
+    )
     .catch(() => {
       throw new Error("ML não exibiu resultados no tempo esperado — possível bloqueio ou mudança de layout.");
     });
@@ -501,6 +504,11 @@ async function main() {
       locale: "pt-BR",
       timezoneId: "America/Sao_Paulo",
       viewport: { width: 1280, height: 800 },
+    });
+
+    // Esconder sinais de automação antes de qualquer navegação
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "webdriver", { get: () => false });
     });
 
     // Bloquear recursos pesados desnecessários (imagens, fontes, mídia)
