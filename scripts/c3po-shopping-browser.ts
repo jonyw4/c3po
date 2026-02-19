@@ -480,7 +480,9 @@ async function searchAmazon(
     .slice(0, limit);
 }
 
-// ─── ML via API oficial (gratuita, sem auth) ──────────────────────────────────
+// ─── ML via API (RapidAPI proxy ou oficial) ───────────────────────────────────
+// Com RAPIDAPI_KEY: usa mercado-libre7.p.rapidapi.com (evita bloqueio de datacenter)
+// Sem key: tenta api.mercadolibre.com diretamente (funciona em IPs residenciais)
 
 interface MLApiItem {
   title: string;
@@ -492,29 +494,8 @@ interface MLApiItem {
   seller: { id: number; nickname: string };
 }
 
-async function searchMLViaApi(
-  query: string,
-  limit: number,
-  maxPrice: number | null
-): Promise<RawProduct[]> {
-  const params = new URLSearchParams({
-    q: query,
-    sort: "price_asc",
-    limit: String(Math.min(limit * 3, 50)),
-  });
-  if (maxPrice !== null) params.set("price_to", String(maxPrice));
-
-  const res = await fetch(
-    `https://api.mercadolibre.com/sites/MLB/search?${params}`,
-    {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(15_000),
-    }
-  );
-  if (!res.ok) throw new Error(`ML API HTTP ${res.status}`);
-
-  const data = (await res.json()) as { results: MLApiItem[] };
-  return (data.results ?? [])
+function mapMLItems(results: MLApiItem[], limit: number): RawProduct[] {
+  return (results ?? [])
     .filter((r) => r.price > 0 && r.title)
     .map(
       (r): RawProduct => ({
@@ -531,6 +512,50 @@ async function searchMLViaApi(
       })
     )
     .slice(0, limit);
+}
+
+async function searchMLViaApi(
+  query: string,
+  limit: number,
+  maxPrice: number | null,
+  rapidApiKey: string
+): Promise<RawProduct[]> {
+  const params = new URLSearchParams({
+    q: query,
+    sort: "price_asc",
+    limit: String(Math.min(limit * 3, 50)),
+  });
+  if (maxPrice !== null) params.set("price_to", String(maxPrice));
+
+  // Preferir proxy RapidAPI (contorna bloqueio de datacenter)
+  if (rapidApiKey) {
+    const res = await fetch(
+      `https://mercado-libre7.p.rapidapi.com/sites/MLB/search?${params}`,
+      {
+        headers: {
+          "X-RapidAPI-Key": rapidApiKey,
+          "X-RapidAPI-Host": "mercado-libre7.p.rapidapi.com",
+          Accept: "application/json",
+        },
+        signal: AbortSignal.timeout(15_000),
+      }
+    );
+    if (!res.ok) throw new Error(`ML RapidAPI HTTP ${res.status}`);
+    const data = (await res.json()) as { results: MLApiItem[] };
+    return mapMLItems(data.results, limit);
+  }
+
+  // Fallback: API oficial direta (só funciona fora de datacenter)
+  const res = await fetch(
+    `https://api.mercadolibre.com/sites/MLB/search?${params}`,
+    {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(15_000),
+    }
+  );
+  if (!res.ok) throw new Error(`ML API HTTP ${res.status}`);
+  const data = (await res.json()) as { results: MLApiItem[] };
+  return mapMLItems(data.results, limit);
 }
 
 // ─── Amazon via Real-Time Amazon Data (RapidAPI – letscrape) ─────────────────
@@ -621,7 +646,7 @@ async function main() {
 
   if (opts.source === "ml" || opts.source === "both") {
     try {
-      const results = await searchMLViaApi(opts.query, opts.limit, opts.maxPrice);
+      const results = await searchMLViaApi(opts.query, opts.limit, opts.maxPrice, RAPIDAPI_KEY);
       raw.push(...results);
     } catch (err: unknown) {
       warnings.push({ source: "ml-api", error: String(err) });
@@ -652,7 +677,6 @@ async function main() {
     !raw.some((r) => r.source === "ml");
   const needsBrowserAmazon =
     (opts.source === "amazon" || opts.source === "both") &&
-    !RAPIDAPI_KEY &&
     !raw.some((r) => r.source === "amazon");
 
   let browser: Browser | null = null;
