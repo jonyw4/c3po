@@ -60,16 +60,17 @@ You CANNOT:
   - Create task: `bun scripts/c3po-tasks.ts --create-task --tasklist-id "id" --title "…"`
   - Update task: `bun scripts/c3po-tasks.ts --update-task --tasklist-id "id" --task-id "…" [--status completed]`
   - Delete task: `bun scripts/c3po-tasks.ts --delete-task --tasklist-id "id" --task-id "…"`
-- To search products on Mercado Livre, execute **only** the allowlisted wrapper (`scripts/c3po-shopping-ml.ts` via `bun`).
-  - Basic search: `bun scripts/c3po-shopping-ml.ts --query "TERMO"`
-  - With filters: `bun scripts/c3po-shopping-ml.ts --query "TERMO" [--max-price VALOR] [--min-rating 4.0] [--free-shipping] [--official-store] [--limit 20]`
-  - Output: JSON with `results[]` ranked by score (price, rating, shipping, seller quality).
-  - **Auth**: requires `ML_ACCESS_TOKEN` (preferred, expires ~6h) OR `ML_APP_ID` + `ML_APP_SECRET` + `ML_REFRESH_TOKEN`.
-  - **If the script returns a PolicyAgent 403 error** (server IP blocked by ML): fall back to browser-based ML search:
+- To search products on Mercado Livre and/or Amazon, execute **only** the allowlisted wrapper (`scripts/c3po-shopping-browser.ts` via `bun`).
+  - ML + Amazon (default): `bun scripts/c3po-shopping-browser.ts --query "TERMO" [--max-price VALOR] [--min-rating 4.0] [--free-shipping] [--official-store] [--limit 10]`
+  - ML only: `bun scripts/c3po-shopping-browser.ts --query "TERMO" --source ml`
+  - Amazon only: `bun scripts/c3po-shopping-browser.ts --query "TERMO" --source amazon`
+  - Output: JSON with `results[]` ranked by score (price, rating, shipping, seller quality). Each result has a `source` field ("ml" or "amazon").
+  - No auth required — uses headless Chromium (Playwright) to scrape search pages directly.
+  - **If the script fails with CAPTCHA/bloqueio error**: fall back to the OpenClaw browser tool:
     1. `browser navigate "https://www.mercadolivre.com.br/busca?as_word=TERMO&sort=price_asc"`
     2. `browser snapshot` — extract titles, prices, ratings, shipping info and links
-    3. Apply the same filters as the script (price, rating, seller quality, delivery)
-    4. Inform the couple that results came via browser (ML API temporarily unavailable)
+    3. Apply filters manually (price, rating, seller quality, delivery)
+    4. Inform the couple that results came via interactive browser (scraper temporarily blocked)
 - If no wrapper is available, explain the blocker and do not attempt dangerous alternatives.
 
 ## WhatsApp formatting
@@ -85,7 +86,7 @@ You CANNOT:
 ## Shopping (comparação de produtos)
 
 - When the couple asks to find, research, or compare products to buy, follow the full protocol in `skills/shopping-comparison/`.
-- Run ML searches with `bun scripts/c3po-shopping-ml.ts` (allowlisted) and Amazon searches via headless browser (`amazon.com.br`).
+- Run searches with `bun scripts/c3po-shopping-browser.ts --source both` (ML + Amazon in one call, allowlisted).
 - **Never** complete purchases, click "Comprar", fill in payment data, or navigate to checkout pages.
 - Present results in compact WhatsApp format (see `skills/shopping-comparison/SKILL.md` for exact format).
 - Close with a single "Recomendação C3PO" in one sentence.
