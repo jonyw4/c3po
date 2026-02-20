@@ -113,11 +113,43 @@ function parseArgs(): Args {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function parsePrice(text: string): number | null {
-  // Aceita: "1.299,90" / "1.299" / "299,90" / "1299.90"
-  const cleaned = text.replace(/[^\d,\.]/g, "").trim();
+  // Aceita:
+  //   BR com milhar:  "1.299,90"  → 1299.90
+  //   BR sem milhar:  "299,90"    → 299.90
+  //   Int'l decimal:  "249.90"    → 249.90   ← API do ML retorna neste formato
+  //   Inteiro:        "1299"      → 1299
+  const cleaned = text.replace(/[^\d,.]/g, "").trim();
   if (!cleaned) return null;
-  // Formato BR: ponto = separador de milhar, vírgula = decimal
-  const normalized = cleaned.replace(/\./g, "").replace(",", ".");
+
+  const hasComma = cleaned.includes(",");
+  const hasDot   = cleaned.includes(".");
+
+  let normalized: string;
+
+  if (hasComma && hasDot) {
+    // Determina qual é decimal pelo que aparece por último
+    // "1.299,90" → comma depois do dot → BR → remove dots, troca comma
+    // "1,299.90" → dot depois da comma → int'l → remove commas
+    normalized = cleaned.lastIndexOf(",") > cleaned.lastIndexOf(".")
+      ? cleaned.replace(/\./g, "").replace(",", ".")
+      : cleaned.replace(/,/g, "");
+  } else if (hasComma) {
+    // Só vírgula: "299,90" (decimal BR) ou "1,299" (milhar int'l)
+    // Se vírgula seguida de exatamente 1-2 dígitos no final → decimal
+    normalized = /,\d{1,2}$/.test(cleaned)
+      ? cleaned.replace(",", ".")
+      : cleaned.replace(/,/g, "");
+  } else if (hasDot) {
+    // Só ponto: "249.90" (decimal int'l) ou "1.299" (milhar BR)
+    // Se exatamente 2 dígitos depois do ÚNICO ponto → decimal
+    const parts = cleaned.split(".");
+    normalized = parts.length === 2 && parts[1].length <= 2
+      ? cleaned                        // "249.90" → 249.90
+      : cleaned.replace(/\./g, "");    // "1.299"  → 1299
+  } else {
+    normalized = cleaned;
+  }
+
   const n = parseFloat(normalized);
   return isNaN(n) ? null : n;
 }
