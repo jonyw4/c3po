@@ -250,24 +250,42 @@ async function searchMLViaApi(
     Accept: "application/json",
   };
 
-  // Tenta paths em ordem de probabilidade para a mercado-libre7 RapidAPI
+  // Tenta paths em ordem de probabilidade para a mercado-libre7 RapidAPI.
+  // Usa params mínimos para evitar rejeição por params inválidos.
+  // Padrão observado: listing_data usa listing_url (URL completa do ML).
+  const q = encodeURIComponent(query);
+  const searchUrl = encodeURIComponent(`https://www.mercadolivre.com.br/search?q=${query}`);
+  const extraPrice = params.get("price_to") ? `&price_to=${params.get("price_to")}` : "";
   const mlPaths = [
-    `https://mercado-libre7.p.rapidapi.com/listings_from_search?q=${encodeURIComponent(query)}&site_id=MLB&limit=${Math.min(limit * 3, 50)}${params.get("price_to") ? `&max_price=${params.get("price_to")}` : ""}`,
-    `https://mercado-libre7.p.rapidapi.com/sites/MLB/search?${params}`,
-    `https://mercado-libre7.p.rapidapi.com/search?site_id=MLB&${params}`,
+    // Path mais provável baseado nos nomes dos outros endpoints da API
+    `https://mercado-libre7.p.rapidapi.com/listings_from_search?query=${q}&site_id=MLB${extraPrice}`,
+    `https://mercado-libre7.p.rapidapi.com/listings_from_search?q=${q}&site_id=MLB${extraPrice}`,
+    // Variante com URL completa de busca (similar ao listing_data que usa listing_url)
+    `https://mercado-libre7.p.rapidapi.com/listings_from_search?search_url=${searchUrl}`,
+    // Outros paths alternativos
+    `https://mercado-libre7.p.rapidapi.com/search_listings?query=${q}&site_id=MLB${extraPrice}`,
+    `https://mercado-libre7.p.rapidapi.com/search?query=${q}&site_id=MLB${extraPrice}`,
+    `https://mercado-libre7.p.rapidapi.com/search?q=${q}&site_id=MLB${extraPrice}`,
   ];
 
+  const tried404: string[] = [];
+  let first404Body = "";
   for (const path of mlPaths) {
     const res = await fetch(path, {
       headers: rapidHeaders,
       signal: AbortSignal.timeout(15_000),
     });
-    if (res.status === 404) continue;
+    if (res.status === 404) {
+      if (!first404Body) first404Body = await res.text().catch(() => "");
+      tried404.push(path.split("?")[0]);
+      continue;
+    }
     if (!res.ok) throw new Error(`ML RapidAPI HTTP ${res.status} em ${path}`);
     const data = (await res.json()) as { results: MLApiItem[] };
     return mapMLItems(data.results, limit);
   }
-  throw new Error("ML RapidAPI: nenhum endpoint respondeu (404 em todos os paths)");
+  const bodyHint = first404Body ? ` | corpo: ${first404Body.slice(0, 200)}` : "";
+  throw new Error(`ML RapidAPI: todos os paths retornaram 404. Tentados: ${tried404.join(", ")}${bodyHint}`);
 }
 
 // ─── Amazon via Real-Time Amazon Data (RapidAPI – letscrape) ─────────────────
@@ -292,11 +310,10 @@ async function searchAmazonViaApi(
   const params = new URLSearchParams({
     query,
     country: "BR",
-    sort_by: "LOWEST_PRICE",
+    sort_by: "RELEVANCE",
     page: "1",
   });
   if (maxPrice !== null) params.set("max_price", String(maxPrice));
-  if (minRating > 0) params.set("min_rating", String(minRating));
 
   const res = await fetch(
     `https://real-time-amazon-data.p.rapidapi.com/search?${params}`,
@@ -395,10 +412,11 @@ async function filterByRelevance(
     const indexes = (JSON.parse(match[0]) as number[]).filter(
       (i) => i >= 0 && i < products.length
     );
-    const filtered = indexes.map((i) => products[i]);
-    return filtered.length > 0 ? filtered : products;
+    // Respeita o julgamento do LLM mesmo que todos sejam filtrados.
+    // Fallback para todos só em caso de erro (bloco catch abaixo).
+    return indexes.map((i) => products[i]);
   } catch {
-    return products; // nunca bloqueia — falha silenciosa
+    return products; // falha silenciosa: retorna tudo se o filtro falhar
   }
 }
 
@@ -510,7 +528,13 @@ async function main() {
 
   // Filtro de relevância via LLM (remove peças/acessórios não relacionados)
   const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "";
+  if (!ANTHROPIC_API_KEY) {
+    warnings.push({ source: "llm-filter", error: "ANTHROPIC_API_KEY não configurado — filtro de relevância desativado." });
+  }
   const relevant = await filterByRelevance(ranked, opts.query, ANTHROPIC_API_KEY);
+  if (relevant.length === 0 && ranked.length > 0) {
+    warnings.push({ source: "llm-filter", error: "Filtro LLM removeu todos os resultados — nenhum produto é realmente o que foi buscado." });
+  }
   const final = relevant.map((p, i) => ({ ...p, rank: i + 1 }));
 
   console.log(
