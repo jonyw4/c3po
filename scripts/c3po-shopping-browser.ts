@@ -251,41 +251,39 @@ async function searchMLViaApi(
   };
 
   // Tenta paths em ordem de probabilidade para a mercado-libre7 RapidAPI.
-  // Usa params mínimos para evitar rejeição por params inválidos.
-  // Padrão observado: listing_data usa listing_url (URL completa do ML).
+  // Padrão observado: listing_data=listing_url, reviews_for_listing=listing_id.
   const q = encodeURIComponent(query);
   const searchUrl = encodeURIComponent(`https://www.mercadolivre.com.br/search?q=${query}`);
   const extraPrice = params.get("price_to") ? `&price_to=${params.get("price_to")}` : "";
   const mlPaths = [
-    // Path mais provável baseado nos nomes dos outros endpoints da API
-    `https://mercado-libre7.p.rapidapi.com/listings_from_search?query=${q}&site_id=MLB${extraPrice}`,
-    `https://mercado-libre7.p.rapidapi.com/listings_from_search?q=${q}&site_id=MLB${extraPrice}`,
-    // Variante com URL completa de busca (similar ao listing_data que usa listing_url)
-    `https://mercado-libre7.p.rapidapi.com/listings_from_search?search_url=${searchUrl}`,
-    // Outros paths alternativos
-    `https://mercado-libre7.p.rapidapi.com/search_listings?query=${q}&site_id=MLB${extraPrice}`,
-    `https://mercado-libre7.p.rapidapi.com/search?query=${q}&site_id=MLB${extraPrice}`,
-    `https://mercado-libre7.p.rapidapi.com/search?q=${q}&site_id=MLB${extraPrice}`,
+    // Variações do nome do endpoint de busca
+    `https://mercado-libre7.p.rapidapi.com/listings_in_search?query=${q}&site_id=MLB${extraPrice}`,
+    `https://mercado-libre7.p.rapidapi.com/listings?query=${q}&site_id=MLB${extraPrice}`,
+    `https://mercado-libre7.p.rapidapi.com/search_results?query=${q}&site_id=MLB${extraPrice}`,
+    `https://mercado-libre7.p.rapidapi.com/items?query=${q}&site_id=MLB${extraPrice}`,
+    `https://mercado-libre7.p.rapidapi.com/items_search?query=${q}&site_id=MLB${extraPrice}`,
+    // Variante com URL completa (mesmo padrão do listing_data)
+    `https://mercado-libre7.p.rapidapi.com/listings_in_search?search_url=${searchUrl}`,
+    `https://mercado-libre7.p.rapidapi.com/listings?search_url=${searchUrl}`,
   ];
 
-  const tried404: string[] = [];
-  let first404Body = "";
+  const tried: Array<{ path: string; body: string }> = [];
   for (const path of mlPaths) {
     const res = await fetch(path, {
       headers: rapidHeaders,
       signal: AbortSignal.timeout(15_000),
     });
     if (res.status === 404) {
-      if (!first404Body) first404Body = await res.text().catch(() => "");
-      tried404.push(path.split("?")[0]);
+      const body = await res.text().catch(() => "");
+      tried.push({ path: path.split("?")[0], body: body.slice(0, 120) });
       continue;
     }
     if (!res.ok) throw new Error(`ML RapidAPI HTTP ${res.status} em ${path}`);
     const data = (await res.json()) as { results: MLApiItem[] };
     return mapMLItems(data.results, limit);
   }
-  const bodyHint = first404Body ? ` | corpo: ${first404Body.slice(0, 200)}` : "";
-  throw new Error(`ML RapidAPI: todos os paths retornaram 404. Tentados: ${tried404.join(", ")}${bodyHint}`);
+  const detail = tried.map(t => `${t.path}: ${t.body}`).join(" || ");
+  throw new Error(`ML RapidAPI 404 em todos os paths. Detalhes: ${detail}`);
 }
 
 // ─── Amazon via Real-Time Amazon Data (RapidAPI – letscrape) ─────────────────
