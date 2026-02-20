@@ -193,38 +193,21 @@ function estimateDelivery(p: RawProduct): string {
 }
 
 
-// ─── ML via API (RapidAPI proxy ou oficial) ───────────────────────────────────
-// Com RAPIDAPI_KEY: usa mercado-libre7.p.rapidapi.com (evita bloqueio de datacenter)
-// Sem key: tenta api.mercadolibre.com diretamente (funciona em IPs residenciais)
+// ─── ML via mercado-libre7 RapidAPI ──────────────────────────────────────────
+// Endpoint: /listings_for_search?search_str=...&country=br&sort_by=relevance&page_num=1
+// Resposta: { search_results, page_results, data: MLSearchItem[] }
 
-interface MLApiItem {
+interface MLSearchItem {
+  id: string;
   title: string;
-  price: number;
-  condition: string;
-  permalink: string;
-  shipping: { free_shipping: boolean };
-  official_store_id: number | null;
-  seller: { id: number; nickname: string };
-}
-
-function mapMLItems(results: MLApiItem[], limit: number): RawProduct[] {
-  return (results ?? [])
-    .filter((r) => r.price > 0 && r.title)
-    .map(
-      (r): RawProduct => ({
-        source: "ml",
-        title: r.title,
-        price: r.price,
-        rating: null, // não disponível no endpoint público de busca
-        reviews_total: null,
-        free_shipping: r.shipping?.free_shipping ?? false,
-        seller_name: r.seller?.nickname ?? "Vendedor ML",
-        seller_type: r.official_store_id ? "official_store" : "regular",
-        permalink: r.permalink,
-        condition: r.condition === "used" ? "used" : "new",
-      })
-    )
-    .slice(0, limit);
+  url: string;
+  price: string;
+  strikethrough_price: string;
+  currency: string;
+  rating: string;
+  votes: string;
+  seller: string;
+  shipping: string;
 }
 
 async function searchMLViaApi(
@@ -233,57 +216,66 @@ async function searchMLViaApi(
   maxPrice: number | null,
   rapidApiKey: string
 ): Promise<RawProduct[]> {
-  const params = new URLSearchParams({
-    q: query,
-    sort: "price_asc",
-    limit: String(Math.min(limit * 3, 50)),
-  });
-  if (maxPrice !== null) params.set("price_to", String(maxPrice));
-
   if (!rapidApiKey) {
     throw new Error("RAPIDAPI_KEY não configurado — ML ignorado.");
   }
 
-  const rapidHeaders = {
-    "X-RapidAPI-Key": rapidApiKey,
-    "X-RapidAPI-Host": "mercado-libre7.p.rapidapi.com",
-    Accept: "application/json",
-  };
-
-  // Tenta paths em ordem de probabilidade para a mercado-libre7 RapidAPI.
-  // Padrão observado: listing_data=listing_url, reviews_for_listing=listing_id.
-  const q = encodeURIComponent(query);
-  const searchUrl = encodeURIComponent(`https://www.mercadolivre.com.br/search?q=${query}`);
-  const extraPrice = params.get("price_to") ? `&price_to=${params.get("price_to")}` : "";
-  const mlPaths = [
-    // Variações do nome do endpoint de busca
-    `https://mercado-libre7.p.rapidapi.com/listings_in_search?query=${q}&site_id=MLB${extraPrice}`,
-    `https://mercado-libre7.p.rapidapi.com/listings?query=${q}&site_id=MLB${extraPrice}`,
-    `https://mercado-libre7.p.rapidapi.com/search_results?query=${q}&site_id=MLB${extraPrice}`,
-    `https://mercado-libre7.p.rapidapi.com/items?query=${q}&site_id=MLB${extraPrice}`,
-    `https://mercado-libre7.p.rapidapi.com/items_search?query=${q}&site_id=MLB${extraPrice}`,
-    // Variante com URL completa (mesmo padrão do listing_data)
-    `https://mercado-libre7.p.rapidapi.com/listings_in_search?search_url=${searchUrl}`,
-    `https://mercado-libre7.p.rapidapi.com/listings?search_url=${searchUrl}`,
-  ];
-
-  const tried: Array<{ path: string; body: string }> = [];
-  for (const path of mlPaths) {
-    const res = await fetch(path, {
-      headers: rapidHeaders,
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (res.status === 404) {
-      const body = await res.text().catch(() => "");
-      tried.push({ path: path.split("?")[0], body: body.slice(0, 120) });
-      continue;
+  const res = await fetch(
+    `https://mercado-libre7.p.rapidapi.com/listings_for_search?` +
+      new URLSearchParams({
+        search_str: query,
+        country: "br",
+        sort_by: "relevance",
+        page_num: "1",
+      }),
+    {
+      headers: {
+        "X-RapidAPI-Key": rapidApiKey,
+        "X-RapidAPI-Host": "mercado-libre7.p.rapidapi.com",
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(20_000),
     }
-    if (!res.ok) throw new Error(`ML RapidAPI HTTP ${res.status} em ${path}`);
-    const data = (await res.json()) as { results: MLApiItem[] };
-    return mapMLItems(data.results, limit);
-  }
-  const detail = tried.map(t => `${t.path}: ${t.body}`).join(" || ");
-  throw new Error(`ML RapidAPI 404 em todos os paths. Detalhes: ${detail}`);
+  );
+
+  if (!res.ok) throw new Error(`ML RapidAPI HTTP ${res.status}`);
+
+  const data = (await res.json()) as { data: MLSearchItem[] };
+  const items = data.data ?? [];
+
+  return items
+    .filter((item) => item.title && item.price)
+    .map((item): RawProduct | null => {
+      const price = parsePrice(item.price);
+      if (!price || price <= 0) return null;
+      if (maxPrice !== null && price > maxPrice) return null;
+
+      const shippingLc = item.shipping.toLowerCase();
+      const free_shipping =
+        shippingLc.includes("grátis") ||
+        shippingLc.includes("gratis") ||
+        shippingLc.includes("free");
+
+      const isUsed =
+        item.url.includes("recondicionado") ||
+        item.title.toLowerCase().includes("recondicionado");
+
+      return {
+        source: "ml",
+        title: item.title,
+        price,
+        rating: item.rating ? parseRating(item.rating) : null,
+        reviews_total: item.votes ? parseReviews(item.votes) : null,
+        free_shipping,
+        seller_name: item.seller.trim() || "Vendedor ML",
+        seller_type: "regular",
+        permalink: item.url,
+        condition: isUsed ? "used" : "new",
+      };
+    })
+    .filter((p): p is RawProduct => p !== null)
+    .slice(0, limit);
+}
 }
 
 // ─── Amazon via Real-Time Amazon Data (RapidAPI – letscrape) ─────────────────
