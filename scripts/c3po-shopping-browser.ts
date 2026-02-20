@@ -275,6 +275,13 @@ async function searchMLViaApi(
   const data = (await res.json()) as { data: MLSearchItem[] };
   const items = data.data ?? [];
 
+  // DEBUG temporário: mostra os campos brutos de preço da API (remover depois)
+  process.stderr.write(
+    "[ML-DEBUG] raw prices: " +
+    items.slice(0, 5).map((i) => `"${i.price}"`).join(", ") +
+    "\n"
+  );
+
   return items
     .filter((item) => item.title && item.price)
     .map((item): RawProduct | null => {
