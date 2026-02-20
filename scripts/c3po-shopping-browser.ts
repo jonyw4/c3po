@@ -469,10 +469,11 @@ async function main() {
   if (opts.freeShipping) pool = pool.filter((p) => p.free_shipping);
   if (opts.officialStore) pool = pool.filter((p) => p.seller_type === "official_store");
 
-  // Rating com fallback progressivo (ML via API não retorna rating — incluir sem filtrar)
-  let withRating = pool.filter((p) => (p.rating ?? 0) >= opts.minRating);
+  // rating === null = desconhecido (ML API não retorna rating) → incluir sempre.
+  // Só excluímos itens com rating CONHECIDO abaixo do mínimo.
+  let withRating = pool.filter((p) => p.rating === null || p.rating >= opts.minRating);
   if (withRating.length < 3) {
-    withRating = pool.filter((p) => (p.rating ?? 0) >= 3.5);
+    withRating = pool.filter((p) => p.rating === null || p.rating >= 3.5);
   }
   const finalPool = withRating.length > 0 ? withRating : pool;
 
