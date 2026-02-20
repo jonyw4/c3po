@@ -276,7 +276,6 @@ async function searchMLViaApi(
     .filter((p): p is RawProduct => p !== null)
     .slice(0, limit);
 }
-}
 
 // ─── Amazon via Real-Time Amazon Data (RapidAPI – letscrape) ─────────────────
 
