@@ -4,7 +4,7 @@
  *
  * ML:     mercado-libre7.p.rapidapi.com (RAPIDAPI_KEY obrigatório)
  * Amazon: real-time-amazon-data.p.rapidapi.com (RAPIDAPI_KEY obrigatório)
- * LLM:    Filtro de relevância via claude-haiku (ANTHROPIC_API_KEY opcional)
+ * LLM:    Filtro de relevância via gemini-2.0-flash (GOOGLE_API_KEY opcional)
  *
  * USO:
  *   bun scripts/c3po-shopping-browser.ts --query "liquidificador"
@@ -22,7 +22,7 @@
  *
  * ENV:
  *   RAPIDAPI_KEY      — chave RapidAPI (obrigatório para qualquer busca)
- *   ANTHROPIC_API_KEY — chave Anthropic para filtro de relevância (opcional)
+ *   GOOGLE_API_KEY    — chave Google AI Studio para filtro de relevância (opcional)
  */
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -275,6 +275,13 @@ async function searchMLViaApi(
   const data = (await res.json()) as { data: MLSearchItem[] };
   const items = data.data ?? [];
 
+  // DEBUG temporário: mostra os campos brutos de preço da API (remover depois)
+  process.stderr.write(
+    "[ML-DEBUG] raw prices: " +
+    items.slice(0, 5).map((i) => `"${i.price}"`).join(", ") +
+    "\n"
+  );
+
   return items
     .filter((item) => item.title && item.price)
     .map((item): RawProduct | null => {
@@ -385,7 +392,7 @@ async function searchAmazonViaApi(
 
 // ─── Filtro de relevância via LLM ────────────────────────────────────────────
 // Remove acessórios, peças e itens não relacionados à busca principal.
-// Requer ANTHROPIC_API_KEY; sem a chave, retorna todos os produtos.
+// Requer GOOGLE_API_KEY; sem a chave, retorna todos os produtos.
 
 async function filterByRelevance(
   products: RankedProduct[],
@@ -395,38 +402,32 @@ async function filterByRelevance(
   if (products.length === 0 || !apiKey) return products;
 
   const list = products.map((p, i) => `${i}: ${p.title} — R$${p.price}`).join("\n");
+  const prompt =
+    `Busca do usuário: "${query}"\n\n` +
+    `Produtos encontrados:\n${list}\n\n` +
+    `Quais desses produtos (pelos índices) SÃO realmente o que o usuário buscou e NÃO são peças, acessórios, tampas, correias, adaptadores, kits de reparo ou itens meramente relacionados? ` +
+    `Responda SOMENTE com um array JSON de índices válidos, sem texto extra. Exemplo: [0, 2, 4]`;
 
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 256,
-        messages: [
-          {
-            role: "user",
-            content:
-              `Busca do usuário: "${query}"\n\n` +
-              `Produtos encontrados:\n${list}\n\n` +
-              `Quais desses produtos (pelos índices) SÃO realmente o que o usuário buscou e NÃO são peças, acessórios, tampas, correias, adaptadores, kits de reparo ou itens meramente relacionados? ` +
-              `Responda SOMENTE com um array JSON de índices válidos, sem texto extra. Exemplo: [0, 2, 4]`,
-          },
-        ],
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { maxOutputTokens: 256 },
+        }),
+        signal: AbortSignal.timeout(15_000),
+      }
+    );
 
     if (!res.ok) return products;
 
     const data = (await res.json()) as {
-      content: Array<{ type: string; text: string }>;
+      candidates: Array<{ content: { parts: Array<{ text: string }> } }>;
     };
-    const text = data.content?.[0]?.text ?? "";
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
     const match = text.match(/\[[\d,\s]*\]/);
     if (!match) return products;
 
@@ -549,11 +550,11 @@ async function main() {
     .slice(0, opts.limit);
 
   // Filtro de relevância via LLM (remove peças/acessórios não relacionados)
-  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "";
-  if (!ANTHROPIC_API_KEY) {
-    warnings.push({ source: "llm-filter", error: "ANTHROPIC_API_KEY não configurado — filtro de relevância desativado." });
+  const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY ?? "";
+  if (!GOOGLE_API_KEY) {
+    warnings.push({ source: "llm-filter", error: "GOOGLE_API_KEY não configurado — filtro de relevância desativado." });
   }
-  const relevant = await filterByRelevance(ranked, opts.query, ANTHROPIC_API_KEY);
+  const relevant = await filterByRelevance(ranked, opts.query, GOOGLE_API_KEY);
   if (relevant.length === 0 && ranked.length > 0) {
     warnings.push({ source: "llm-filter", error: "Filtro LLM removeu todos os resultados — nenhum produto é realmente o que foi buscado." });
   }
