@@ -7,6 +7,11 @@
     defaults: {
       // Use this repository as workspace (KB + memory + guardrails).
       workspace: "/ABSOLUTE/PATH/TO/THIS/REPO",
+      // LLM model: use Google Gemini instead of Anthropic Claude.
+      // Format: "provider/model". Requires GEMINI_API_KEY in environment.
+      model: {
+        primary: "google/gemini-2.5-flash",
+      },
     },
     // Define a stable agent id for use in Exec Approvals.
     list: [
